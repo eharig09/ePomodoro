@@ -1,0 +1,17 @@
+.env
+.venv/
+.venv-macos/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.tmp/
+.streamlit/secrets.toml
+data/*.db
+data/*.db-*
+data/*.sqlite
+data/*.sqlite3
+data/backups/
+.coverage
+htmlcov/
+build/
+dist/

@@ -1,0 +1,7 @@
+streamlit>=1.57,<2
+todoist-api-python>=4,<5
+python-dotenv>=1,<2
+keyring>=25,<26
+pandas>=2,<4
+numpy>=1.23,<3
+pytest>=8,<10

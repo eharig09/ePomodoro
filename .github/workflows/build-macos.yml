@@ -1,0 +1,115 @@
+name: Build macOS installers
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.display_name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - display_name: Apple silicon
+            runner: macos-15
+            architecture: arm64
+          - display_name: Intel
+            runner: macos-15-intel
+            architecture: x86_64
+
+    env:
+      FOCUS_MAC_ARCH: ${{ matrix.architecture }}
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Check out the project
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-build.txt
+
+      - name: Build the app and disk image
+        run: bash scripts/build_macos.sh --clean
+
+      - name: Run automated tests
+        run: .venv-macos/bin/python -m pytest -q
+
+      - name: Smoke-test the packaged application
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_binary="dist/Focus.app/Contents/MacOS/Focus"
+          launcher_output="$RUNNER_TEMP/focus-launcher-output.log"
+          export FOCUS_NO_BROWSER=1
+          export FOCUS_PORT=8766
+          export TODOIST_API_TOKEN=""
+          export PYTHON_DOTENV_DISABLED=1
+
+          "$app_binary" >"$launcher_output" 2>&1 &
+          focus_pid=$!
+          cleanup() {
+            kill "$focus_pid" 2>/dev/null || true
+            wait "$focus_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for _ in {1..120}; do
+            if ! kill -0 "$focus_pid" 2>/dev/null; then
+              echo "Focus exited before its server became healthy."
+              cat "$launcher_output"
+              exit 1
+            fi
+            if curl --fail --silent --show-error \
+              "http://127.0.0.1:8766/_stcore/health" >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 0.5
+          done
+
+          if [[ "$ready" -ne 1 ]]; then
+            echo "Focus did not become healthy within 60 seconds."
+            cat "$launcher_output"
+            exit 1
+          fi
+
+          curl --fail --silent --show-error \
+            "http://127.0.0.1:8766" >/dev/null
+
+      - name: Verify private files are absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find dist/Focus.app \
+            \( -name ".env" -o -name ".env.*" -o -name "focus.db" \) \
+            -print -quit | grep -q .; then
+            echo "A private environment or database file was included in the app."
+            exit 1
+          fi
+
+      - name: Create checksum
+        shell: bash
+        run: |
+          dmg="dist/Focus-macOS-${{ matrix.architecture }}.dmg"
+          shasum -a 256 "$dmg" >"${dmg}.sha256"
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: Focus-macOS-${{ matrix.architecture }}
+          path: |
+            dist/Focus-macOS-${{ matrix.architecture }}.dmg
+            dist/Focus-macOS-${{ matrix.architecture }}.dmg.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
