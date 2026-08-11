@@ -1,4 +1,6 @@
 .env
+.cloud_config.json
+cloud_config.json
 .venv/
 .venv-macos/
 __pycache__/

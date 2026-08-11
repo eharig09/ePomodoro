@@ -11,18 +11,18 @@ class FakeKeyring:
             pass
 
     def __init__(self) -> None:
-        self.password: str | None = None
+        self.passwords: dict[tuple[str, str], str] = {}
 
     def get_password(self, service: str, username: str) -> str | None:
-        return self.password
+        return self.passwords.get((service, username))
 
     def set_password(self, service: str, username: str, password: str) -> None:
-        self.password = password
+        self.passwords[(service, username)] = password
 
     def delete_password(self, service: str, username: str) -> None:
-        if self.password is None:
+        if (service, username) not in self.passwords:
             raise self.errors.PasswordDeleteError()
-        self.password = None
+        del self.passwords[(service, username)]
 
 
 def test_credential_round_trip(monkeypatch) -> None:
@@ -49,6 +49,22 @@ def test_environment_token_is_a_developer_override(monkeypatch) -> None:
 
     assert settings_service.get_todoist_token() == "from-environment"
     assert settings_service.get_todoist_token_source() == "environment"
+
+
+def test_todoist_tokens_are_scoped_to_cloud_account(monkeypatch) -> None:
+    vault = FakeKeyring()
+    monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+    monkeypatch.setattr(settings_service, "_keyring_module", lambda: vault)
+
+    settings_service.save_todoist_token("local-token")
+    monkeypatch.setenv("FOCUS_CLOUD_USER_ID", "account-a")
+    assert settings_service.get_todoist_token() == ""
+    settings_service.save_todoist_token("account-token")
+
+    monkeypatch.delenv("FOCUS_CLOUD_USER_ID")
+    assert settings_service.get_todoist_token() == "local-token"
+    monkeypatch.setenv("FOCUS_CLOUD_USER_ID", "account-a")
+    assert settings_service.get_todoist_token() == "account-token"
 
 
 def test_credential_store_label_matches_platform(monkeypatch) -> None:

@@ -30,6 +30,12 @@ def _keyring_module():
     return keyring
 
 
+def _credential_username() -> str:
+    """Keep each cloud account's optional Todoist credential isolated."""
+    user_id = os.getenv("FOCUS_CLOUD_USER_ID", "").strip()
+    return f"{CREDENTIAL_USERNAME}:{user_id}" if user_id else CREDENTIAL_USERNAME
+
+
 def get_todoist_token() -> str:
     """Return a developer override or the token in the operating-system vault."""
     environment_token = os.getenv("TODOIST_API_TOKEN", "").strip()
@@ -37,7 +43,7 @@ def get_todoist_token() -> str:
         return environment_token
     try:
         return (_keyring_module().get_password(
-            CREDENTIAL_SERVICE, CREDENTIAL_USERNAME
+            CREDENTIAL_SERVICE, _credential_username()
         ) or "").strip()
     except Exception:
         # A broken or locked credential vault should never prevent local-only use.
@@ -56,7 +62,7 @@ def save_todoist_token(token: str) -> None:
         raise ValueError("Enter a Todoist API token")
     try:
         _keyring_module().set_password(
-            CREDENTIAL_SERVICE, CREDENTIAL_USERNAME, clean_token
+            CREDENTIAL_SERVICE, _credential_username(), clean_token
         )
     except Exception as exc:
         raise CredentialStoreError(
@@ -67,7 +73,7 @@ def save_todoist_token(token: str) -> None:
 def remove_todoist_token() -> None:
     keyring = _keyring_module()
     try:
-        keyring.delete_password(CREDENTIAL_SERVICE, CREDENTIAL_USERNAME)
+        keyring.delete_password(CREDENTIAL_SERVICE, _credential_username())
     except keyring.errors.PasswordDeleteError:
         return
     except Exception as exc:

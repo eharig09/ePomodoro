@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 from database.db import get_app_setting, init_db, record_sync_run
 from services.audio_service import ambient_noise
+from services.cloud_account_service import activate_stored_cloud_profile
 from services.habit_service import sync_completed_habit_history
 from services.health_service import create_database_backup
 from services.settings_service import get_todoist_token
@@ -19,6 +20,7 @@ from services.todoist_service import TodoistServiceError
 
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
+activate_stored_cloud_profile()
 
 DEFAULT_CALM_MUSIC_URL = "https://www.youtube.com/watch?v=X4VbdwhkE10"
 

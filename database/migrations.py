@@ -332,6 +332,25 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         );
         """,
     ),
+    (
+        10,
+        """
+        CREATE TABLE IF NOT EXISTS cloud_sync_shadow (
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            client_updated_at TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            deleted_at TEXT,
+            PRIMARY KEY (entity_type, entity_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS cloud_sync_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """,
+    ),
 )
 
 

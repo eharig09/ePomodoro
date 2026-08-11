@@ -18,10 +18,14 @@ interface, so the existing Python/Streamlit desktop app remains unchanged.
 - Dark mode by default.
 - SQLite data stored on the device. The optional Todoist token is stored through
   Android encrypted credential storage and is never included in an APK.
+- Optional email/password accounts synchronize local tasks, focus history,
+  habits, check-ins, moods, and journals with desktop while keeping a separate
+  offline SQLite profile for every account.
 
-The mobile and desktop databases are currently independent. Cross-device sync is
-planned as a separate encrypted export/import or sync feature; silently combining
-two local databases would risk overwriting history.
+Cloud sync is manual in this first release and must be configured by the app
+administrator. Existing local data is copied into an account only when the user
+explicitly chooses the one-time import option. Builds without cloud configuration
+continue to work entirely in local mode.
 
 ## Build and test locally
 
@@ -45,6 +49,10 @@ Run the repository's **Build Android APK** workflow from GitHub Actions. It pins
 the Flutter framework revision used during development, runs formatting checks,
 analysis, and tests, builds one universal APK, scans it for private runtime files,
 creates a SHA-256 checksum, and uploads the result as `ePomodoro-Android`.
+
+To enable accounts in the APK, add the repository variables `SUPABASE_URL` and
+`SUPABASE_PUBLISHABLE_KEY` before running the workflow. See
+`docs/cloud-sync-setup.md` for the backend migration and security setup.
 
 The MVP uses Android debug signing for direct installation. Publishing through
 Google Play will require a private upload key and Play App Signing; those

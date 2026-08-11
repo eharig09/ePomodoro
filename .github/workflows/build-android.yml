@@ -27,6 +27,8 @@ jobs:
     timeout-minutes: 35
     env:
       FLUTTER_REVISION: 6b182d2c7585eba26d4edce0f97630effd256c33
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
 
     steps:
       - name: Check out the project
@@ -75,7 +77,11 @@ jobs:
 
       - name: Build installable APK
         working-directory: mobile
-        run: flutter build apk --release
+        shell: bash
+        run: |
+          flutter build apk --release \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+            --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY"
 
       - name: Name and verify artifact
         working-directory: mobile

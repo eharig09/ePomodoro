@@ -12,6 +12,9 @@ datas = [
     (str(project_root / "app.py"), "."),
     (str(project_root / ".streamlit" / "config.toml"), ".streamlit"),
 ]
+cloud_config = project_root / "cloud_config.json"
+if cloud_config.exists():
+    datas.append((str(cloud_config), "."))
 for folder in ("app_pages", "components", "database", "services"):
     for source in (project_root / folder).glob("*.py"):
         datas.append((str(source), folder))

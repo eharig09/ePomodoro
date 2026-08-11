@@ -16,8 +16,28 @@ done
 
 cd "$project_root"
 
+cloud_config="$project_root/cloud_config.json"
+generated_cloud_config=0
+cleanup_cloud_config() {
+    if [[ "$generated_cloud_config" -eq 1 ]]; then
+        rm -f "$cloud_config"
+    fi
+}
+trap cleanup_cloud_config EXIT
+
 if [[ ! -x "$venv_path/bin/python" ]]; then
     python3 -m venv "$venv_path"
+fi
+
+if [[ ! -f "$cloud_config" ]] &&
+   [[ -n "${SUPABASE_URL:-}" || -n "${SUPABASE_PUBLISHABLE_KEY:-}" ]]; then
+    if [[ -z "${SUPABASE_URL:-}" || -z "${SUPABASE_PUBLISHABLE_KEY:-}" ]]; then
+        echo "Cloud builds require both SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY." >&2
+        exit 1
+    fi
+    SUPABASE_URL="$SUPABASE_URL" SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY" \
+        "$venv_path/bin/python" -c 'import json, os, pathlib; pathlib.Path("cloud_config.json").write_text(json.dumps({"supabase_url": os.environ["SUPABASE_URL"], "supabase_publishable_key": os.environ["SUPABASE_PUBLISHABLE_KEY"]}), encoding="utf-8")'
+    generated_cloud_config=1
 fi
 
 if [[ "$skip_install" -eq 0 ]]; then

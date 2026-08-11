@@ -1,8 +1,8 @@
 # Focus productivity app
 
 A local-first Streamlit productivity application with focus timers, tasks, habits,
-goals, reviews, and analytics. It works entirely without an account; Todoist is an
-optional connection for importing tasks and tracking linked completions.
+goals, reviews, and analytics. Accounts and cross-device sync are optional;
+Todoist remains an optional connection for importing tasks and linked completions.
 
 ## Easiest Windows setup
 
@@ -32,6 +32,9 @@ The `mobile` directory contains an Android-first Flutter companion with local
 SQLite storage, optional Todoist API v1 synchronization, focus and break timers,
 scheduled habits and streaks, mood/journaling, and editable history. It uses a
 separate mobile database, leaving the desktop application unchanged.
+When optional cloud accounts are configured, desktop and Android synchronize
+local tasks, focus history, habits, check-ins, moods, and journals. Every account
+still has its own offline database, and local-only mode remains available.
 
 Run the **Build Android APK** GitHub Actions workflow to create one universal
 `ePomodoro-Android.apk` that can be shared directly. See `mobile/README.md` for
@@ -263,4 +266,6 @@ tests/                     Focused unit and persistence tests
 - Local tasks have a deliberately small lifecycle: add, focus, and complete; editing and reopening are not included yet.
 - Detailed interruption events are not yet captured separately, although the database schema reserves an `interruptions` table.
 - Analytics use the computer's local timezone and remain intentionally modest.
-- No accounts, OAuth, notifications, mobile client, calendar integration, or cloud hosting are included.
+- Account sync is manual and currently covers data shared by the desktop and
+  Android views; goals, plans, and weekly reviews remain desktop-only.
+- Notifications, calendar integration, and a hosted public backend are not included.

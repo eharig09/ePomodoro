@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../data/local_store.dart';
+import '../data/cloud_client.dart';
+import '../data/cloud_sync_service.dart';
 import '../data/todoist_client.dart';
 import '../models.dart';
 import '../services/chime_service.dart';
@@ -15,18 +17,34 @@ class AppController extends ChangeNotifier {
     TodoistClient? todoist,
     FlutterSecureStorage? secureStorage,
     ChimeService? chime,
+    CloudClient? cloud,
   }) : store = store ?? LocalStore(),
        todoist = todoist ?? TodoistClient(),
        secureStorage = secureStorage ?? const FlutterSecureStorage(),
-       chime = chime ?? ChimeService();
+       chime = chime ?? ChimeService() {
+    try {
+      this.cloud = cloud ?? CloudClient(storage: this.secureStorage);
+    } on CloudException catch (error) {
+      cloudConfigurationError = error.message;
+    }
+  }
 
-  static const _tokenKey = 'todoist_api_token';
   static const _activeTimerKey = 'active_timer';
 
   final LocalStore store;
   final TodoistClient todoist;
   final FlutterSecureStorage secureStorage;
   final ChimeService chime;
+  CloudClient? cloud;
+  String? cloudConfigurationError;
+  CloudSession? cloudSession;
+  bool cloudSyncing = false;
+  DateTime? lastCloudSync;
+
+  bool get cloudAvailable => cloud?.available ?? false;
+  String get _tokenKey => cloudSession == null
+      ? 'todoist_api_token'
+      : 'todoist_api_token:${cloudSession!.userId}';
 
   List<TaskItem> tasks = [];
   List<HabitItem> habits = [];
@@ -55,6 +73,18 @@ class AppController extends ChangeNotifier {
     loading = true;
     notifyListeners();
     try {
+      cloudSession = await cloud?.restoreSession();
+      if (cloudSession != null) {
+        try {
+          await store.useProfile(cloudSession!.userId);
+        } on FormatException {
+          await cloud?.signOut();
+          cloudSession = null;
+          await store.useProfile(null);
+          message =
+              'The saved account was invalid, so local mode was restored.';
+        }
+      }
       await reload();
       darkMode = (await store.getSetting('dark_mode')) != 'false';
       chimeEnabled = (await store.getSetting('chime_enabled')) != 'false';
@@ -63,6 +93,10 @@ class AppController extends ChangeNotifier {
       hasTodoistToken =
           (await secureStorage.read(key: _tokenKey) ?? '').isNotEmpty;
       await _restoreTimer();
+      final cloudSyncValue = await store.getCloudState('last_sync');
+      lastCloudSync = cloudSyncValue == null
+          ? null
+          : DateTime.tryParse(cloudSyncValue);
     } finally {
       loading = false;
       notifyListeners();
@@ -132,6 +166,113 @@ class AppController extends ChangeNotifier {
 
   Future<String> readTodoistToken() async =>
       await secureStorage.read(key: _tokenKey) ?? '';
+
+  Future<void> signInCloud(
+    String email,
+    String password, {
+    bool importLocal = false,
+  }) async {
+    final activeCloud = cloud;
+    if (activeCloud == null || !activeCloud.available) return;
+    cloudSyncing = true;
+    message = null;
+    notifyListeners();
+    try {
+      final session = await activeCloud.signIn(email, password);
+      _ticker?.cancel();
+      await store.useProfile(session.userId, importLocal: importLocal);
+      cloudSession = session;
+      await _loadProfile();
+      cloudSyncing = false;
+      await syncCloud();
+    } on CloudException catch (error) {
+      message = error.message;
+    } on FormatException {
+      message = 'The account profile could not be opened.';
+    } finally {
+      cloudSyncing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> createCloudAccount(String email, String password) async {
+    final activeCloud = cloud;
+    if (activeCloud == null || !activeCloud.available) return;
+    cloudSyncing = true;
+    message = null;
+    notifyListeners();
+    try {
+      final session = await activeCloud.signUp(email, password);
+      if (session == null) {
+        message = 'Account created. Confirm your email, then sign in.';
+      } else {
+        await store.useProfile(session.userId);
+        cloudSession = session;
+        await _loadProfile();
+        message = 'Account created and signed in.';
+      }
+    } on CloudException catch (error) {
+      message = error.message;
+    } finally {
+      cloudSyncing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> signOutCloud() async {
+    _ticker?.cancel();
+    await cloud?.signOut();
+    cloudSession = null;
+    await store.useProfile(null);
+    await _loadProfile();
+    message = 'Signed out. This device is back in local-only mode.';
+    notifyListeners();
+  }
+
+  Future<void> syncCloud() async {
+    final activeCloud = cloud;
+    if (activeCloud == null || cloudSession == null || cloudSyncing) return;
+    cloudSyncing = true;
+    message = null;
+    notifyListeners();
+    try {
+      final summary = await CloudSyncService(
+        client: activeCloud,
+        store: store,
+      ).synchronize();
+      lastCloudSync = summary.syncedAt;
+      await reload();
+      message =
+          'Synced ${summary.pushed} local change(s) and received '
+          '${summary.pulled} cloud record(s).';
+    } on CloudException catch (error) {
+      message = error.message;
+    } catch (_) {
+      message = 'Cloud sync could not finish. Your local data is safe.';
+    } finally {
+      cloudSyncing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _loadProfile() async {
+    tasks = [];
+    habits = [];
+    checkins = [];
+    sessions = [];
+    timerTask = null;
+    timerRunning = false;
+    timerStartedAt = null;
+    timerEndAt = null;
+    await reload();
+    darkMode = (await store.getSetting('dark_mode')) != 'false';
+    chimeEnabled = (await store.getSetting('chime_enabled')) != 'false';
+    hasTodoistToken =
+        (await secureStorage.read(key: _tokenKey) ?? '').isNotEmpty;
+    final value = await store.getCloudState('last_sync');
+    lastCloudSync = value == null ? null : DateTime.tryParse(value);
+    await _restoreTimer();
+  }
 
   Future<void> syncTodoist() async {
     if (syncing) return;
