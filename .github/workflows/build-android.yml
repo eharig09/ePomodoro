@@ -75,6 +75,28 @@ jobs:
         working-directory: mobile
         run: flutter test
 
+      - name: Prepare permanent Android signing
+        working-directory: mobile
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_KEYSTORE_PASSWORD" || \
+                -z "$ANDROID_KEY_PASSWORD" || -z "$ANDROID_KEY_ALIAS" ]]; then
+            echo "Permanent Android signing secrets are required."
+            exit 1
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/epomodoro-upload.jks
+          {
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "storeFile=epomodoro-upload.jks"
+          } > android/key.properties
+
       - name: Build installable APK
         working-directory: mobile
         shell: bash
@@ -90,7 +112,7 @@ jobs:
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk dist/ePomodoro-Android.apk
           sha256sum dist/ePomodoro-Android.apk > dist/ePomodoro-Android.apk.sha256
-          if unzip -l dist/ePomodoro-Android.apk | grep -Eiq '(^|/)(\.env|focus\.db|epomodoro_mobile\.db)(/|$)'; then
+          if unzip -l dist/ePomodoro-Android.apk | grep -Eiq '(^|/)(\.env|focus\.db|epomodoro_mobile\.db|key\.properties|.*\.jks)(/|$)'; then
             echo "A private runtime file was found in the APK."
             exit 1
           fi

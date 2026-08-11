@@ -54,6 +54,14 @@ To enable accounts in the APK, add the repository variables `SUPABASE_URL` and
 `SUPABASE_PUBLISHABLE_KEY` before running the workflow. See
 `docs/cloud-sync-setup.md` for the backend migration and security setup.
 
-The MVP uses Android debug signing for direct installation. Publishing through
-Google Play will require a private upload key and Play App Signing; those
-credentials must never be committed to this repository.
+Distributed APKs use one permanent signing certificate supplied through encrypted
+GitHub Actions secrets. To update a phone, download the newer APK, open it, and
+choose **Update**; Android preserves the app's local data. Each release must also
+increase the numeric build suffix in `pubspec.yaml` (for example `+2` to `+3`).
+
+APK builds created before version 0.2.0 used a disposable debug certificate and
+cannot be updated in place. Those early builds must be uninstalled once before
+installing 0.2.0. After that one-time transition, normal in-place updates work.
+
+Publishing through Google Play can later use Play App Signing. Signing keys and
+passwords must never be committed to this repository.

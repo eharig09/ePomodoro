@@ -1,6 +1,9 @@
 .env
 .cloud_config.json
 cloud_config.json
+mobile/android/key.properties
+mobile/android/*.jks
+mobile/android/app/*.jks
 .venv/
 .venv-macos/
 __pycache__/
