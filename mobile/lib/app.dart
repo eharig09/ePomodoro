@@ -55,7 +55,9 @@ class _EPomodoroAppState extends State<EPomodoroApp>
     return AnimatedBuilder(
       animation: widget.controller,
       builder: (context, _) {
-        final seed = const Color(0xFF7C6FF2);
+        const seed = Color(0xFFE3263E);
+        const darkBackground = Color(0xFF09090B);
+        const darkSurface = Color(0xFF171719);
         return AppScope(
           controller: widget.controller,
           child: MaterialApp(
@@ -68,7 +70,10 @@ class _EPomodoroAppState extends State<EPomodoroApp>
               colorScheme: ColorScheme.fromSeed(
                 seedColor: seed,
                 brightness: Brightness.light,
-              ),
+                surface: const Color(0xFFFFF9F9),
+              ).copyWith(primary: const Color(0xFFB5162B)),
+              scaffoldBackgroundColor: const Color(0xFFFFF9F9),
+              cardTheme: const CardThemeData(elevation: 0),
               useMaterial3: true,
               inputDecorationTheme: const InputDecorationTheme(
                 border: OutlineInputBorder(),
@@ -78,12 +83,13 @@ class _EPomodoroAppState extends State<EPomodoroApp>
               colorScheme: ColorScheme.fromSeed(
                 seedColor: seed,
                 brightness: Brightness.dark,
-                surface: const Color(0xFF121318),
+                surface: darkSurface,
               ),
-              scaffoldBackgroundColor: const Color(0xFF0C0D12),
-              cardTheme: const CardThemeData(
-                color: Color(0xFF17181F),
-                elevation: 0,
+              scaffoldBackgroundColor: darkBackground,
+              cardTheme: const CardThemeData(color: darkSurface, elevation: 0),
+              navigationBarTheme: const NavigationBarThemeData(
+                backgroundColor: Color(0xFF111113),
+                indicatorColor: Color(0xFF5A1722),
               ),
               useMaterial3: true,
               inputDecorationTheme: const InputDecorationTheme(

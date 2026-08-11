@@ -324,8 +324,7 @@ class LocalStore {
       whereArgs: [habit.id],
       limit: 1,
     );
-    await db.insert('habits', {
-      'id': habit.id,
+    final values = <String, Object?>{
       'name': habit.name,
       'group_name': habit.groupName,
       'emoji': habit.emoji,
@@ -336,7 +335,12 @@ class LocalStore {
           ? now
           : existing.first['created_at'] ?? now,
       'updated_at': now,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    };
+    if (existing.isEmpty) {
+      await db.insert('habits', {'id': habit.id, ...values});
+    } else {
+      await db.update('habits', values, where: 'id = ?', whereArgs: [habit.id]);
+    }
   }
 
   Future<void> deleteHabit(String id) async {
@@ -688,8 +692,7 @@ class LocalStore {
               ? HabitTrackingMode.todoistLabel
               : HabitTrackingMode.manual,
         );
-        await db.insert('habits', {
-          'id': id,
+        final habitValues = <String, Object?>{
           'name': payload['name']?.toString() ?? 'Habit',
           'group_name': payload['group_name']?.toString() ?? 'Habits',
           'emoji': payload['emoji']?.toString() ?? '✨',
@@ -704,7 +707,24 @@ class LocalStore {
               : payload['todoist_label']?.toString() ?? '',
           'created_at': payload['created_at']?.toString(),
           'updated_at': payload['updated_at']?.toString(),
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        };
+        final existingHabit = await db.query(
+          'habits',
+          columns: ['id'],
+          where: 'id = ?',
+          whereArgs: [id],
+          limit: 1,
+        );
+        if (existingHabit.isEmpty) {
+          await db.insert('habits', {'id': id, ...habitValues});
+        } else {
+          await db.update(
+            'habits',
+            habitValues,
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+        }
         break;
       case 'habit_checkin':
         final habitId = payload['habit_id']?.toString() ?? '';

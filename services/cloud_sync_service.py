@@ -9,7 +9,12 @@ from urllib.parse import urlencode
 from uuid import uuid4
 
 from database.db import connect
-from services.cloud_account_service import CloudAccountError, CloudAccountService
+from services.cloud_account_service import (
+    CloudAccountError,
+    CloudAccountService,
+    CloudConfig,
+    get_cloud_session,
+)
 
 
 ENTITY_TYPES = {
@@ -35,6 +40,16 @@ class SyncSummary:
     pulled: int
     applied: int
     synced_at: datetime
+
+
+def synchronize_if_signed_in(
+    db_path: str | Path | None = None,
+) -> SyncSummary | None:
+    """Synchronize the active profile when cloud accounts are configured and signed in."""
+    config = CloudConfig.from_environment()
+    if config is None or get_cloud_session() is None:
+        return None
+    return synchronize_cloud(CloudAccountService(config), db_path)
 
 
 def synchronize_cloud(

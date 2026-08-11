@@ -75,6 +75,7 @@ class AppController extends ChangeNotifier {
   DateTime? timerStartedAt;
   DateTime? timerEndAt;
   Timer? _ticker;
+  Timer? _cloudSyncTimer;
   int _ticksSinceSave = 0;
 
   Future<void> initialize() async {
@@ -155,6 +156,7 @@ class AppController extends ChangeNotifier {
         source: task.source.name,
       );
       await reload();
+      _scheduleCloudSync();
     } on TodoistException catch (error) {
       message = error.message;
       notifyListeners();
@@ -313,6 +315,7 @@ class AppController extends ChangeNotifier {
       await store.setSetting('last_sync', lastSync!.toIso8601String());
       await reload();
       message = 'Todoist synced: ${result.tasks.length} active tasks.';
+      _scheduleCloudSync();
     } on TodoistException catch (error) {
       message = error.message;
     } catch (_) {
@@ -345,11 +348,13 @@ class AppController extends ChangeNotifier {
     await store.saveHabit(habit);
     habits = await store.loadHabits();
     notifyListeners();
+    _scheduleCloudSync();
   }
 
   Future<void> deleteHabit(String id) async {
     await store.deleteHabit(id);
     await reload();
+    _scheduleCloudSync();
   }
 
   bool habitDoneOn(String habitId, DateTime day) => checkins.any(
@@ -367,6 +372,7 @@ class AppController extends ChangeNotifier {
     );
     checkins = await store.loadCheckins();
     notifyListeners();
+    _scheduleCloudSync();
   }
 
   ({int current, int best}) streaksFor(HabitItem habit) {
@@ -413,9 +419,7 @@ class AppController extends ChangeNotifier {
     await store.saveReflection(DateTime.now(), reflection);
     journalEntries = await store.loadJournalEntries();
     notifyListeners();
-    if (cloudSession != null) {
-      unawaited(syncCloud());
-    }
+    _scheduleCloudSync();
   }
 
   Future<void> updateSession(FocusSession session) async {
@@ -620,9 +624,22 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  void _scheduleCloudSync() {
+    if (cloudSession == null) return;
+    _cloudSyncTimer?.cancel();
+    _cloudSyncTimer = Timer(const Duration(milliseconds: 600), () {
+      if (cloudSyncing) {
+        _scheduleCloudSync();
+      } else {
+        unawaited(syncCloud());
+      }
+    });
+  }
+
   @override
   void dispose() {
     _ticker?.cancel();
+    _cloudSyncTimer?.cancel();
     unawaited(chime.dispose());
     super.dispose();
   }
