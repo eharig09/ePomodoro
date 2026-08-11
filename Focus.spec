@@ -11,6 +11,7 @@ keyring_data, keyring_binaries, keyring_hidden = collect_all("keyring")
 datas = [
     (str(project_root / "app.py"), "."),
     (str(project_root / ".streamlit" / "config.toml"), ".streamlit"),
+    (str(project_root / "assets" / "app_icon.png"), "assets"),
 ]
 cloud_config = project_root / "cloud_config.json"
 if cloud_config.exists():
@@ -66,6 +67,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(project_root / "assets" / "app_icon.ico"),
 )
 
 coll = COLLECT(

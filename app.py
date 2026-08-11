@@ -26,7 +26,7 @@ DEFAULT_CALM_MUSIC_URL = "https://www.youtube.com/watch?v=X4VbdwhkE10"
 
 st.set_page_config(
     page_title="Focus",
-    page_icon=":material/timer:",
+    page_icon=str(Path(__file__).resolve().parent / "assets" / "app_icon.png"),
     layout="wide",
     initial_sidebar_state="auto",
 )

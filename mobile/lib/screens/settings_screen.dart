@@ -212,7 +212,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 18),
         Center(
           child: Text(
-            'ePomodoro Mobile 0.2.2',
+            'ePomodoro Mobile 0.2.3',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
