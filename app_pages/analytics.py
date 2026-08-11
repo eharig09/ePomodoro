@@ -7,7 +7,10 @@ import streamlit as st
 
 from database.db import get_daily_reflections, get_focus_sessions
 from services.analytics_service import calculate_analytics
-from services.productivity_service import build_focus_profile
+from services.productivity_service import (
+    build_estimation_calibration,
+    build_focus_profile,
+)
 from services.timer_service import format_duration
 
 
@@ -32,6 +35,7 @@ if not sessions:
 
 metrics = calculate_analytics(sessions)
 profile = build_focus_profile(sessions, get_daily_reflections())
+calibration = build_estimation_calibration(sessions)
 
 with st.container(horizontal=True):
     st.metric(
@@ -85,6 +89,60 @@ elif profile["plan_accuracy"] is not None:
             "the day easier to size accurately.",
             icon=":material/lightbulb:",
         )
+
+st.subheader("Planning accuracy")
+st.caption(
+    "Learned estimates use completed sessions only. Task evidence takes priority, "
+    "then project evidence, then your overall history."
+)
+calibration_rows: list[dict[str, object]] = []
+for task_id, ratio in calibration["task_ratios"].items():
+    calibration_rows.append(
+        {
+            "Level": "Task",
+            "Name": calibration["task_names"].get(task_id, task_id),
+            "Sessions": calibration["task_samples"].get(task_id, 0),
+            "Adjustment": float(ratio) - 1,
+            "25-minute estimate becomes": max(
+                5, int(round((25 * float(ratio)) / 5) * 5)
+            ),
+        }
+    )
+for project_key, ratio in calibration["project_ratios"].items():
+    calibration_rows.append(
+        {
+            "Level": "Project",
+            "Name": calibration["project_names"].get(project_key, project_key),
+            "Sessions": calibration["project_samples"].get(project_key, 0),
+            "Adjustment": float(ratio) - 1,
+            "25-minute estimate becomes": max(
+                5, int(round((25 * float(ratio)) / 5) * 5)
+            ),
+        }
+    )
+
+if calibration_rows:
+    st.dataframe(
+        pd.DataFrame(calibration_rows).sort_values(
+            ["Level", "Sessions", "Name"],
+            ascending=[True, False, True],
+        ),
+        hide_index=True,
+        column_config={
+            "Adjustment": st.column_config.NumberColumn(
+                "Typical difference", format="percent"
+            ),
+            "25-minute estimate becomes": st.column_config.NumberColumn(
+                "25 min becomes", format="%d min"
+            ),
+        },
+    )
+else:
+    st.info(
+        "Complete at least two sessions for the same task or three in one project "
+        "to unlock learned estimates.",
+        icon=":material/insights:",
+    )
 
 coach_left, coach_right = st.columns(2)
 with coach_left:

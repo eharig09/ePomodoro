@@ -45,6 +45,16 @@ the feature list, development commands, and current signing limitations.
 - Optionally loads active Todoist tasks and projects through the official Python SDK.
 - Shows every task due today or all active tasks without hiding projects.
 - Sorts or groups the complete task view by priority or project.
+- Builds an editable suggested day from priority, due dates, goals, energy,
+  available focus time, and user-selected breathing room.
+- Learns conservative task and project estimate adjustments from repeated
+  completed focus sessions and explains the evidence behind each adjustment.
+- Adds a durable daily startup and shutdown routine with wins, blockers,
+  explicit unfinished-task decisions, and a chosen first task for tomorrow.
+- Stores one to five weekly objectives and a weekly intention beside the
+  evidence-based weekly review.
+- Reads cached Google, Outlook, or standard ICS calendars to identify open focus
+  windows and preview daily-plan tasks inside them without writing calendar events.
 - Supports SQLite-backed local focus tasks that never go to Todoist.
 - Runs 15, 25, 50, or custom-length focus sessions without blocking the app.
 - Includes 5, 10, 15, or custom break timers that stay out of focus analytics.
@@ -267,6 +277,10 @@ tests/                     Focused unit and persistence tests
 - Detailed interruption events are not yet captured separately, although the database schema reserves an `interruptions` table.
 - Analytics use the computer's local timezone and remain intentionally modest.
 - Account sync runs after sign-in and on demand. Goals and their links are
-  preserved in cloud sync, while goal management, plans, and weekly reviews
-  remain desktop-only views.
+  preserved in cloud sync. Daily plans and rituals, weekly objectives, and
+  weekly reviews also sync between desktop/browser installations; their
+  management screens remain desktop/browser-only while Android safely ignores
+  those records.
+- Calendar subscription links, cached events, and availability preferences stay
+  on the device and are not included in account sync.
 - Notifications, calendar integration, and a hosted public backend are not included.

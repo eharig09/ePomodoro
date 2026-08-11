@@ -9,7 +9,8 @@ public configuration values, desktop and Android continue in local-only mode.
 1. Create a Supabase project.
 2. Open the SQL editor and run
    `supabase/migrations/202608110001_multi_user_sync.sql`, followed by
-   `supabase/migrations/202608110002_sync_goals.sql`.
+   `supabase/migrations/202608110002_sync_goals.sql`, then
+   `supabase/migrations/202608110003_sync_planning.sql`.
 3. In Authentication > Providers > Email, keep email/password enabled.
 4. Keep email confirmation enabled for public use. Configure custom SMTP before
    a production launch; Supabase's trial sender is intentionally rate limited.
@@ -57,6 +58,10 @@ The GitHub Android workflow reads repository variables named `SUPABASE_URL` and
 - Todoist tokens never enter sync records and remain in each device's secure vault.
 
 This protocol synchronizes local tasks, focus history, habits, habit check-ins,
-moods, journals, and desktop goals with their links. Android preserves goal
-records in the account but does not yet provide a goal-management view. Planning
-and weekly reviews remain desktop-only.
+moods, journals, desktop goals with their links, daily plans and rituals, weekly
+objectives, and weekly reviews. Android ignores planning and goal records it does
+not yet display without deleting them from the account; those views remain
+desktop/browser-only for now.
+
+Calendar subscription links, cached ICS event data, and availability preferences
+are intentionally device-local and do not enter account sync.

@@ -351,6 +351,54 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         );
         """,
     ),
+    (
+        11,
+        """
+        CREATE TABLE IF NOT EXISTS daily_rituals (
+            ritual_date TEXT PRIMARY KEY,
+            startup_completed_at TEXT,
+            shutdown_completed_at TEXT,
+            wins TEXT NOT NULL DEFAULT '',
+            blockers TEXT NOT NULL DEFAULT '',
+            tomorrow_first_task_id TEXT,
+            tomorrow_first_task_name TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_daily_rituals_date
+            ON daily_rituals(ritual_date DESC);
+
+        CREATE TABLE IF NOT EXISTS weekly_plans (
+            week_start TEXT PRIMARY KEY,
+            objectives TEXT NOT NULL DEFAULT '',
+            intention TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_weekly_plans_start
+            ON weekly_plans(week_start DESC);
+        """,
+    ),
+    (
+        12,
+        """
+        CREATE TABLE IF NOT EXISTS calendar_sources (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            provider TEXT NOT NULL CHECK (
+                provider IN ('google', 'outlook', 'ics')
+            ),
+            ics_data TEXT NOT NULL,
+            event_count INTEGER NOT NULL DEFAULT 0 CHECK (event_count >= 0),
+            last_refreshed_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_calendar_sources_refreshed
+            ON calendar_sources(last_refreshed_at DESC);
+        """,
+    ),
 )
 
 

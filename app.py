@@ -209,6 +209,11 @@ else:
             icon=":material/rate_review:",
         ),
         st.Page(
+            "app_pages/calendar.py",
+            title="Calendar",
+            icon=":material/calendar_month:",
+        ),
+        st.Page(
             "app_pages/history.py",
             title="History",
             icon=":material/history:",

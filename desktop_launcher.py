@@ -25,6 +25,9 @@ def bundle_root() -> Path:
 
 
 def user_data_root() -> Path:
+    override = os.getenv("FOCUS_DATA_ROOT", "").strip()
+    if override:
+        return Path(override).expanduser()
     local_app_data = os.getenv("LOCALAPPDATA", "").strip()
     base = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
     return base / APP_NAME
@@ -72,7 +75,8 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, MUTEX_NAME)
+    mutex_name = os.getenv("FOCUS_MUTEX_NAME", "").strip() or MUTEX_NAME
+    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
     if not mutex:
         raise OSError("Windows could not create the Focus application lock.")
 

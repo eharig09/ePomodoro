@@ -8,18 +8,25 @@ import streamlit as st
 from database.db import (
     get_active_local_focus_tasks,
     get_daily_plan,
+    get_daily_ritual,
+    get_focus_sessions,
     get_goal_links,
     get_goals,
     get_habit_daily_checkins,
     get_habit_definitions,
     get_task_preferences,
+    mark_daily_startup_complete,
     record_sync_run,
     save_daily_plan,
+    save_daily_shutdown,
     save_task_preferences,
     set_daily_plan_item_status,
 )
 from database.models import DailyPlan, TaskPreference
 from services.productivity_service import (
+    build_daily_plan_suggestion,
+    build_estimation_calibration,
+    calibrated_task_estimate,
     energy_level_from_labels,
     estimate_minutes_from_labels,
     recommend_tasks,
@@ -37,6 +44,8 @@ st.caption("Build a realistic plan, protect your top three, and choose the next 
 
 token = get_todoist_token()
 today = date.today()
+st.session_state.setdefault("today_plan_suggestion", None)
+st.session_state.setdefault("today_plan_editor_version", 0)
 
 
 def load_tasks() -> None:
@@ -74,6 +83,7 @@ all_tasks = [*todoist_tasks, *local_tasks]
 task_by_id = {task.id: task for task in all_tasks}
 
 plan, saved_items = get_daily_plan(today)
+daily_ritual = get_daily_ritual(today)
 completed_today_ids = {
     task.id
     for task in st.session_state.habit_completed_tasks
@@ -90,6 +100,11 @@ preferences = get_task_preferences()
 goals = get_goals(active_only=True)
 goal_by_id = {goal.id: goal for goal in goals}
 goal_links = get_goal_links()
+goal_task_ids = {
+    str(link["entity_id"])
+    for link in goal_links
+    if str(link["entity_type"]) == "task"
+}
 task_goal_names: dict[str, list[str]] = {}
 for link in goal_links:
     if link["entity_type"] == "task" and link["goal_id"] in goal_by_id:
@@ -107,8 +122,164 @@ scheduled_habits = [
     habit for habit in habits if today.weekday() in habit.scheduled_weekdays
 ]
 
-default_energy = plan.energy_level if plan else "medium"
-default_available = plan.available_minutes if plan else 240
+with st.container(border=True):
+    st.subheader("Daily rhythm")
+    with st.container(horizontal=True):
+        if daily_ritual and daily_ritual.startup_completed_at:
+            st.badge(
+                "Startup complete",
+                icon=":material/wb_sunny:",
+                color="green",
+            )
+        else:
+            st.badge(
+                "Startup waiting",
+                icon=":material/wb_sunny:",
+                color="orange",
+            )
+        if daily_ritual and daily_ritual.shutdown_completed_at:
+            st.badge(
+                "Shutdown complete",
+                icon=":material/nights_stay:",
+                color="green",
+            )
+        else:
+            st.badge(
+                "Shutdown waiting",
+                icon=":material/nights_stay:",
+                color="gray",
+            )
+    if not daily_ritual or not daily_ritual.startup_completed_at:
+        st.caption(
+            "Saving today's plan completes the startup ritual. Choose capacity, "
+            "an intention, and no more than three essential tasks."
+        )
+
+focus_sessions = get_focus_sessions()
+estimation_calibration = build_estimation_calibration(focus_sessions)
+suggestion = st.session_state.today_plan_suggestion
+if (
+    not isinstance(suggestion, dict)
+    or suggestion.get("plan_date") != today.isoformat()
+):
+    suggestion = None
+    st.session_state.today_plan_suggestion = None
+suggested_items = suggestion.get("items", []) if suggestion else []
+suggested_by_id = {
+    str(item["task"].id): (index, item)
+    for index, item in enumerate(suggested_items)
+}
+
+
+@st.dialog("Suggest my day")
+def suggest_day_dialog() -> None:
+    st.caption(
+        "ePomodoro will rank active tasks, protect breathing room, and prepare an "
+        "editable draft. Nothing is sent to Todoist."
+    )
+    with st.form("suggest_day_form"):
+        suggested_energy = st.segmented_control(
+            "Expected energy",
+            ["low", "medium", "high"],
+            default=plan.energy_level if plan else "medium",
+            format_func=str.title,
+        )
+        suggested_available = int(
+            st.number_input(
+                "Available focus minutes",
+                min_value=1,
+                max_value=1_440,
+                value=plan.available_minutes if plan else 240,
+                step=15,
+            )
+        )
+        buffer_percent = int(
+            st.slider(
+                "Breathing room",
+                min_value=0,
+                max_value=50,
+                value=20,
+                step=5,
+                format="%d%%",
+                help="Leaves capacity unplanned for interruptions and transitions.",
+            )
+        )
+        maximum_tasks = int(
+            st.number_input(
+                "Maximum planned tasks",
+                min_value=1,
+                max_value=20,
+                value=8,
+            )
+        )
+        submitted = st.form_submit_button(
+            "Build suggested plan",
+            type="primary",
+            icon=":material/auto_awesome:",
+        )
+    if submitted:
+        if suggested_energy not in {"low", "medium", "high"}:
+            st.error("Choose an expected energy level.")
+            return
+        result = build_daily_plan_suggestion(
+            all_tasks,
+            preferences=preferences,
+            current_energy=str(suggested_energy),
+            available_minutes=suggested_available,
+            goal_task_ids=goal_task_ids,
+            today=today,
+            buffer_percent=buffer_percent,
+            max_tasks=maximum_tasks,
+            estimation_calibration=estimation_calibration,
+        )
+        st.session_state.today_plan_suggestion = {
+            **result,
+            "plan_date": today.isoformat(),
+            "energy_level": str(suggested_energy),
+        }
+        st.session_state.today_plan_editor_version += 1
+        st.rerun()
+
+
+with st.container(horizontal=True, horizontal_alignment="right"):
+    if st.button(
+        "Suggest my day",
+        icon=":material/auto_awesome:",
+        disabled=not all_tasks,
+    ):
+        suggest_day_dialog()
+
+if suggestion:
+    st.success(
+        f"Suggested draft: {len(suggested_items)} tasks using "
+        f"{suggestion['planned_minutes']} of {suggestion['usable_minutes']} usable minutes. "
+        f"{suggestion['buffer_minutes']} minutes remain protected.",
+        icon=":material/auto_awesome:",
+    )
+    if suggestion.get("unplanned_due"):
+        due_names = ", ".join(
+            str(item["task"].content)
+            for item in suggestion["unplanned_due"][:3]
+        )
+        st.warning(
+            f"Capacity could not fit every due task. Still unplanned: {due_names}.",
+            icon=":material/warning:",
+        )
+
+default_energy = (
+    str(suggestion["energy_level"])
+    if suggestion
+    else plan.energy_level
+    if plan
+    else "medium"
+)
+default_available = (
+    int(suggestion["available_minutes"])
+    if suggestion
+    else plan.available_minutes
+    if plan
+    else 240
+)
 default_shutdown = (
     time.fromisoformat(plan.shutdown_time) if plan else time(hour=17)
 )
@@ -119,7 +290,10 @@ for index, task in enumerate(
     sorted(
         all_tasks,
         key=lambda item: (
-            item.id not in saved_by_id,
+            item.id not in (suggested_by_id if suggestion else saved_by_id),
+            suggested_by_id.get(item.id, (10_000, None))[0]
+            if suggestion
+            else int(saved_by_id.get(item.id, {}).get("position", 10_000)),
             -item.priority,
             item.project_name.casefold(),
             item.content.casefold(),
@@ -130,19 +304,47 @@ for index, task in enumerate(
     preference = preferences.get(task.id)
     tagged_energy = energy_level_from_labels(task.labels)
     tagged_minutes = estimate_minutes_from_labels(task.labels)
-    include_default = bool(saved) or (
-        plan is None and (task.source == "local" or task.is_due_on(today))
+    estimate_detail = calibrated_task_estimate(
+        task, preference, estimation_calibration
+    )
+    suggested = suggested_by_id.get(task.id)
+    include_default = (
+        suggested is not None
+        if suggestion
+        else bool(saved)
+        or (plan is None and (task.source == "local" or task.is_due_on(today)))
     )
     rows.append(
         {
             "Task ID": task.id,
             "Include": include_default,
-            "Top 3": bool(saved and saved["is_top_three"]),
-            "Order": int(saved["position"]) + 1 if saved else index + 1,
+            "Top 3": (
+                bool(suggested and suggested[0] < 3)
+                if suggestion
+                else bool(saved and saved["is_top_three"])
+            ),
+            "Order": (
+                suggested[0] + 1
+                if suggested
+                else int(saved["position"]) + 1
+                if saved
+                else index + 1
+            ),
             "Task": task.content,
             "Project": task.project_name,
             "Priority": task.priority_label,
             "Estimate": task_estimate_minutes(task, preference),
+            "Learned estimate": (
+                f"{estimate_detail['estimated_minutes']} min"
+                if estimate_detail["scope"] is not None
+                else "Not enough history"
+            ),
+            "Evidence": (
+                f"{str(estimate_detail['scope']).title()} Â· "
+                f"{estimate_detail['samples']} sessions"
+                if estimate_detail["scope"] is not None
+                else "â€”"
+            ),
             "Estimate source": (
                 "Todoist label"
                 if tagged_minutes
@@ -174,6 +376,8 @@ plan_frame = pd.DataFrame(
         "Project",
         "Priority",
         "Estimate",
+        "Learned estimate",
+        "Evidence",
         "Estimate source",
         "Energy",
         "Energy source",
@@ -211,11 +415,13 @@ with st.form("daily_command_center"):
     edited = st.data_editor(
         plan_frame,
         hide_index=True,
-        key="today_plan_editor",
+        key=f"today_plan_editor_{st.session_state.today_plan_editor_version}",
         disabled=[
             "Task",
             "Project",
             "Priority",
+            "Learned estimate",
+            "Evidence",
             "Estimate source",
             "Energy source",
             "Goal",
@@ -231,6 +437,8 @@ with st.form("daily_command_center"):
                 "Minutes", min_value=1, max_value=1_440, step=5
             ),
             "Estimate source": st.column_config.TextColumn("Time source"),
+            "Learned estimate": st.column_config.TextColumn("Learned time"),
+            "Evidence": st.column_config.TextColumn("Estimate evidence"),
             "Energy": st.column_config.SelectboxColumn(
                 "Energy", options=["low", "medium", "high"]
             ),
@@ -297,6 +505,9 @@ if save_clicked:
             ],
         )
         st.toast("Today’s plan saved.", icon=":material/check:")
+        mark_daily_startup_complete(today, completed_at=timestamp)
+        st.session_state.today_plan_suggestion = None
+        st.session_state.today_plan_editor_version += 1
         st.rerun()
 
 plan, saved_items = get_daily_plan(today)
@@ -312,11 +523,27 @@ top_ids = {
     if bool(item["is_top_three"]) and str(item["status"]) == "planned"
 }
 estimated_total = sum(
-    preferences[task_id].estimated_minutes
+    int(
+        calibrated_task_estimate(
+            task_by_id[task_id],
+            preferences.get(task_id),
+            estimation_calibration,
+        )["estimated_minutes"]
+    )
     for task_id in planned_ids
-    if task_id in preferences
+    if task_id in task_by_id
 )
 available = plan.available_minutes if plan else default_available
+focused_today_minutes = round(
+    sum(
+        int(row.get("actual_seconds", 0) or 0)
+        for row in focus_sessions
+        if not bool(row.get("is_provisional"))
+        and local_timestamp(row["started_at"]).date() == today
+    )
+    / 60
+)
+remaining_capacity = max(1, available - focused_today_minutes)
 
 with st.container(horizontal=True):
     st.metric("Planned", f"{estimated_total} min", border=True)
@@ -340,22 +567,26 @@ elif saved_items:
         icon=":material/check_circle:",
     )
 
-active_plan_tasks = [task_by_id[task_id] for task_id in planned_ids if task_id in task_by_id]
+if focused_today_minutes:
+    st.caption(
+        f"{focused_today_minutes} focus minutes logged today; "
+        f"about {remaining_capacity} remain in your stated capacity."
+    )
+
+active_plan_tasks = [
+    task_by_id[task_id] for task_id in planned_ids if task_id in task_by_id
+]
 recommendation_pool = active_plan_tasks or all_tasks
-goal_task_ids = {
-    str(link["entity_id"])
-    for link in goal_links
-    if str(link["entity_type"]) == "task"
-}
 recommendations = recommend_tasks(
     recommendation_pool,
     preferences=preferences,
     current_energy=plan.energy_level if plan else default_energy,
-    available_minutes=available,
+    available_minutes=remaining_capacity,
     planned_task_ids=planned_ids,
     top_task_ids=top_ids,
     goal_task_ids=goal_task_ids,
     today=today,
+    estimation_calibration=estimation_calibration,
 )
 
 st.subheader("What should I do next?")
@@ -370,6 +601,12 @@ else:
             f"{recommended_task.project_name} · {best['estimated_minutes']} min · "
             f"{str(best['energy_level']).title()} energy"
         )
+        if best["estimate_scope"] is not None:
+            st.caption(
+                f"Configured estimate: {best['base_estimated_minutes']} min. "
+                f"Learned from {best['estimate_samples']} completed "
+                f"{best['estimate_scope']} sessions."
+            )
         st.write(" · ".join(str(reason) for reason in best["reasons"]))
         if st.button(
             "Focus on this task",
@@ -378,6 +615,141 @@ else:
         ):
             st.session_state.selected_task_id = recommended_task.id
             st.switch_page("app_pages/focus.py")
+
+
+@st.dialog("Daily shutdown", width="large")
+def daily_shutdown_dialog() -> None:
+    unfinished_items = [
+        item for item in saved_items if str(item["status"]) == "planned"
+    ]
+    item_names = {
+        str(item["task_id"]): str(item["task_name"])
+        for item in unfinished_items
+    }
+    resolution_frame = pd.DataFrame(
+        [
+            {
+                "Task ID": str(item["task_id"]),
+                "Task": str(item["task_name"]),
+                "Project": str(item["project_name"]),
+                "Resolution": "Decide",
+            }
+            for item in unfinished_items
+        ]
+    )
+    with st.form(f"daily_shutdown_{today.isoformat()}"):
+        st.caption(
+            "Resolve every unfinished task, capture what mattered, and choose the "
+            "first task you want to see tomorrow."
+        )
+        st.caption(
+            "These resolutions update your ePomodoro plan only; Todoist tasks are "
+            "never completed or rescheduled from this shutdown."
+        )
+        if unfinished_items:
+            edited_resolutions = st.data_editor(
+                resolution_frame,
+                hide_index=True,
+                disabled=["Task", "Project"],
+                column_config={
+                    "Task ID": None,
+                    "Task": st.column_config.TextColumn("Task", pinned=True),
+                    "Resolution": st.column_config.SelectboxColumn(
+                        "Resolution",
+                        options=[
+                            "Decide",
+                            "Continue tomorrow",
+                            "Defer",
+                            "Completed",
+                        ],
+                        required=True,
+                    ),
+                },
+            )
+            first_task_id = st.selectbox(
+                "First task tomorrow",
+                [None, *item_names],
+                format_func=lambda task_id: (
+                    "No preference" if task_id is None else item_names[task_id]
+                ),
+            )
+        else:
+            edited_resolutions = resolution_frame
+            first_task_id = None
+            st.success(
+                "There are no unfinished planned tasks to resolve.",
+                icon=":material/task_alt:",
+            )
+        wins = st.text_area(
+            "Wins",
+            value=daily_ritual.wins if daily_ritual else "",
+            max_chars=5_000,
+            placeholder="What moved forward or went well?",
+        )
+        blockers = st.text_area(
+            "Blockers",
+            value=daily_ritual.blockers if daily_ritual else "",
+            max_chars=5_000,
+            placeholder="What got in the way or needs attention tomorrow?",
+        )
+        submitted = st.form_submit_button(
+            "Finish shutdown",
+            type="primary",
+            icon=":material/nights_stay:",
+        )
+    if submitted:
+        label_to_status = {
+            "Continue tomorrow": "continue",
+            "Defer": "deferred",
+            "Completed": "completed",
+        }
+        rows = edited_resolutions.to_dict("records")
+        resolutions = {
+            str(row["Task ID"]): label_to_status.get(
+                str(row["Resolution"]), "decide"
+            )
+            for row in rows
+        }
+        if first_task_id is not None:
+            resolutions[str(first_task_id)] = "continue"
+        if "decide" in resolutions.values():
+            st.error("Choose a resolution for every unfinished task.")
+            return
+        save_daily_shutdown(
+            today,
+            resolutions=resolutions,
+            wins=wins,
+            blockers=blockers,
+            tomorrow_first_task_id=(
+                str(first_task_id) if first_task_id is not None else None
+            ),
+        )
+        st.toast("Daily shutdown saved. Continued tasks are ready tomorrow.")
+        st.rerun()
+
+
+with st.container(border=True):
+    st.subheader("Daily shutdown")
+    if daily_ritual and daily_ritual.shutdown_completed_at:
+        st.success("Today's shutdown is complete.", icon=":material/nights_stay:")
+        if daily_ritual.tomorrow_first_task_name:
+            st.caption(
+                f"First task tomorrow: {daily_ritual.tomorrow_first_task_name}"
+            )
+        action_label = "Edit shutdown reflection"
+        action_icon = ":material/edit:"
+    else:
+        unfinished_count = sum(
+            str(item["status"]) == "planned" for item in saved_items
+        )
+        st.caption(
+            f"{unfinished_count} unfinished planned task"
+            f"{'s' if unfinished_count != 1 else ''} to resolve."
+        )
+        action_label = "Review and finish the day"
+        action_icon = ":material/nights_stay:"
+    if st.button(action_label, icon=action_icon, type="primary"):
+        daily_shutdown_dialog()
 
 if scheduled_habits:
     st.subheader("Scheduled habits")

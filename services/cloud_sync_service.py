@@ -24,6 +24,10 @@ ENTITY_TYPES = {
     "habit_checkin",
     "reflection",
     "goal",
+    "daily_plan",
+    "daily_ritual",
+    "weekly_plan",
+    "weekly_review",
 }
 
 
@@ -72,20 +76,29 @@ def synchronize_cloud(
                 payload={"p_records": pending},
             )
         except CloudAccountError as exc:
-            # Older projects may not have the goal entity migration yet. Keep
-            # all existing sync data working and retry goals on the next sync.
+            # Older projects may not have newer entity migrations yet. Keep
+            # the original sync data working and retry newer records later.
             legacy_schema = "sync_records_entity_type_check" in str(exc)
-            without_goals = [
-                record for record in pending if record["entity_type"] != "goal"
+            legacy_types = {
+                "local_task",
+                "focus_session",
+                "habit",
+                "habit_checkin",
+                "reflection",
+            }
+            legacy_records = [
+                record
+                for record in pending
+                if record["entity_type"] in legacy_types
             ]
-            if not legacy_schema or len(without_goals) == len(pending):
+            if not legacy_schema or len(legacy_records) == len(pending):
                 raise
-            pushed = len(without_goals)
-            if without_goals:
+            pushed = len(legacy_records)
+            if legacy_records:
                 account.authorized_json(
                     "POST",
                     "/rest/v1/rpc/merge_sync_records",
-                    payload={"p_records": without_goals},
+                    payload={"p_records": legacy_records},
                 )
 
     remote = _fetch_all_records(account)
@@ -296,6 +309,122 @@ def export_sync_entities(
                     },
                 )
             )
+
+        task_preferences = {
+            str(row["task_id"]): dict(row)
+            for row in connection.execute(
+                "SELECT * FROM task_preferences ORDER BY task_id"
+            ).fetchall()
+        }
+        for row in connection.execute(
+            "SELECT * FROM daily_plans ORDER BY plan_date"
+        ).fetchall():
+            plan_date = str(row["plan_date"])
+            items: list[dict[str, object]] = []
+            for item in connection.execute(
+                """
+                SELECT * FROM daily_plan_items
+                WHERE plan_date = ? ORDER BY position, task_id
+                """,
+                (plan_date,),
+            ).fetchall():
+                task_id = str(item["task_id"])
+                preference = task_preferences.get(task_id)
+                items.append(
+                    {
+                        "task_id": task_id,
+                        "task_name": str(item["task_name"]),
+                        "project_name": str(item["project_name"]),
+                        "source": str(item["source"]),
+                        "position": int(item["position"]),
+                        "is_top_three": bool(item["is_top_three"]),
+                        "status": str(item["status"]),
+                        "energy_level": (
+                            str(preference["energy_level"])
+                            if preference
+                            else "medium"
+                        ),
+                        "estimated_minutes": (
+                            int(preference["estimated_minutes"])
+                            if preference
+                            else 25
+                        ),
+                    }
+                )
+            entities.append(
+                LocalSyncEntity(
+                    "daily_plan",
+                    plan_date,
+                    {
+                        "plan_date": plan_date,
+                        "energy_level": str(row["energy_level"]),
+                        "available_minutes": int(row["available_minutes"]),
+                        "shutdown_time": str(row["shutdown_time"]),
+                        "intention": str(row["intention"]),
+                        "updated_at": str(row["updated_at"]),
+                        "items": items,
+                    },
+                )
+            )
+
+        for row in connection.execute(
+            "SELECT * FROM daily_rituals ORDER BY ritual_date"
+        ).fetchall():
+            ritual_date = str(row["ritual_date"])
+            entities.append(
+                LocalSyncEntity(
+                    "daily_ritual",
+                    ritual_date,
+                    {
+                        "ritual_date": ritual_date,
+                        "startup_completed_at": row["startup_completed_at"],
+                        "shutdown_completed_at": row["shutdown_completed_at"],
+                        "wins": str(row["wins"]),
+                        "blockers": str(row["blockers"]),
+                        "tomorrow_first_task_id": row["tomorrow_first_task_id"],
+                        "tomorrow_first_task_name": str(
+                            row["tomorrow_first_task_name"]
+                        ),
+                        "updated_at": str(row["updated_at"]),
+                    },
+                )
+            )
+
+        for row in connection.execute(
+            "SELECT * FROM weekly_plans ORDER BY week_start"
+        ).fetchall():
+            week_start = str(row["week_start"])
+            entities.append(
+                LocalSyncEntity(
+                    "weekly_plan",
+                    week_start,
+                    {
+                        "week_start": week_start,
+                        "objectives": str(row["objectives"]),
+                        "intention": str(row["intention"]),
+                        "updated_at": str(row["updated_at"]),
+                    },
+                )
+            )
+
+        for row in connection.execute(
+            "SELECT * FROM weekly_reviews ORDER BY week_start"
+        ).fetchall():
+            week_start = str(row["week_start"])
+            entities.append(
+                LocalSyncEntity(
+                    "weekly_review",
+                    week_start,
+                    {
+                        "week_start": week_start,
+                        "rating": int(row["rating"]),
+                        "wins": str(row["wins"]),
+                        "blockers": str(row["blockers"]),
+                        "adjustments": str(row["adjustments"]),
+                        "updated_at": str(row["updated_at"]),
+                    },
+                )
+            )
     return entities
 
 
@@ -315,19 +444,27 @@ def apply_remote_records(
         return 0
 
     delete_priority = {
+        "daily_ritual": 0,
+        "weekly_review": 0,
+        "weekly_plan": 0,
         "habit_checkin": 0,
         "focus_session": 1,
         "local_task": 1,
         "reflection": 1,
         "goal": 2,
         "habit": 2,
+        "daily_plan": 2,
     }
     upsert_priority = {
+        "daily_plan": 0,
+        "weekly_plan": 0,
         "habit": 0,
         "local_task": 1,
         "focus_session": 1,
         "reflection": 1,
         "goal": 1,
+        "daily_ritual": 2,
+        "weekly_review": 2,
         "habit_checkin": 2,
     }
     deletes = sorted(
@@ -553,6 +690,20 @@ def _delete_entity(connection, record: Mapping[str, object]) -> None:
         )
     elif entity_type == "goal":
         connection.execute("DELETE FROM goals WHERE id = ?", (entity_id,))
+    elif entity_type == "daily_plan":
+        connection.execute("DELETE FROM daily_plans WHERE plan_date = ?", (entity_id,))
+    elif entity_type == "daily_ritual":
+        connection.execute(
+            "DELETE FROM daily_rituals WHERE ritual_date = ?", (entity_id,)
+        )
+    elif entity_type == "weekly_plan":
+        connection.execute(
+            "DELETE FROM weekly_plans WHERE week_start = ?", (entity_id,)
+        )
+    elif entity_type == "weekly_review":
+        connection.execute(
+            "DELETE FROM weekly_reviews WHERE week_start = ?", (entity_id,)
+        )
 
 
 def _upsert_entity(connection, record: Mapping[str, object]) -> None:
@@ -732,6 +883,214 @@ def _upsert_entity(connection, record: Mapping[str, object]) -> None:
                     and _text(link.get("entity_id"), 300)
                 ],
             )
+    elif entity_type == "daily_plan":
+        _upsert_daily_plan(connection, entity_id, payload, timestamp)
+    elif entity_type == "daily_ritual":
+        _upsert_daily_ritual(connection, entity_id, payload, timestamp)
+    elif entity_type == "weekly_plan":
+        _upsert_weekly_plan(connection, entity_id, payload, timestamp)
+    elif entity_type == "weekly_review":
+        _upsert_weekly_review(connection, entity_id, payload, timestamp)
+
+
+def _upsert_daily_plan(
+    connection,
+    entity_id: str,
+    payload: dict[str, object],
+    timestamp: str,
+) -> None:
+    plan_date = _date_text(payload.get("plan_date")) or _date_text(entity_id)
+    if not plan_date:
+        return
+    energy_level = str(payload.get("energy_level") or "medium")
+    if energy_level not in {"low", "medium", "high"}:
+        energy_level = "medium"
+    connection.execute(
+        """
+        INSERT INTO daily_plans (
+            plan_date, energy_level, available_minutes,
+            shutdown_time, intention, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(plan_date) DO UPDATE SET
+            energy_level = excluded.energy_level,
+            available_minutes = excluded.available_minutes,
+            shutdown_time = excluded.shutdown_time,
+            intention = excluded.intention,
+            updated_at = excluded.updated_at
+        """,
+        (
+            plan_date,
+            energy_level,
+            _positive_int(payload.get("available_minutes") or 240, maximum=1_440),
+            _text(payload.get("shutdown_time"), 5, "17:00"),
+            _text(payload.get("intention"), 500),
+            _valid_timestamp(payload.get("updated_at")) or timestamp,
+        ),
+    )
+    connection.execute(
+        "DELETE FROM daily_plan_items WHERE plan_date = ?", (plan_date,)
+    )
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return
+    for index, raw_item in enumerate(items[:200]):
+        if not isinstance(raw_item, dict):
+            continue
+        task_id = _text(raw_item.get("task_id"), 300)
+        task_name = _text(raw_item.get("task_name"), 300)
+        if not task_id or not task_name:
+            continue
+        source = str(raw_item.get("source") or "todoist")
+        if source not in {"todoist", "local"}:
+            source = "todoist"
+        status = str(raw_item.get("status") or "planned")
+        if status not in {"planned", "completed", "deferred"}:
+            status = "planned"
+        position = _nonnegative_int(raw_item.get("position"), maximum=10_000)
+        connection.execute(
+            """
+            INSERT INTO daily_plan_items (
+                plan_date, task_id, task_name, project_name, source,
+                position, is_top_three, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                plan_date,
+                task_id,
+                task_name,
+                _text(raw_item.get("project_name"), 120, "Unknown project"),
+                source,
+                position if raw_item.get("position") is not None else index,
+                int(bool(raw_item.get("is_top_three", False))),
+                status,
+            ),
+        )
+        item_energy = str(raw_item.get("energy_level") or "medium")
+        if item_energy not in {"low", "medium", "high"}:
+            item_energy = "medium"
+        connection.execute(
+            """
+            INSERT INTO task_preferences (
+                task_id, task_name, project_name, energy_level,
+                estimated_minutes, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(task_id) DO UPDATE SET
+                task_name = excluded.task_name,
+                project_name = excluded.project_name,
+                energy_level = excluded.energy_level,
+                estimated_minutes = excluded.estimated_minutes,
+                updated_at = excluded.updated_at
+            """,
+            (
+                task_id,
+                task_name,
+                _text(raw_item.get("project_name"), 120, "Unknown project"),
+                item_energy,
+                _positive_int(
+                    raw_item.get("estimated_minutes") or 25,
+                    maximum=1_440,
+                ),
+                _valid_timestamp(payload.get("updated_at")) or timestamp,
+            ),
+        )
+
+
+def _upsert_daily_ritual(
+    connection,
+    entity_id: str,
+    payload: dict[str, object],
+    timestamp: str,
+) -> None:
+    ritual_date = _date_text(payload.get("ritual_date")) or _date_text(entity_id)
+    if not ritual_date:
+        return
+    connection.execute(
+        """
+        INSERT INTO daily_rituals (
+            ritual_date, startup_completed_at, shutdown_completed_at,
+            wins, blockers, tomorrow_first_task_id,
+            tomorrow_first_task_name, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(ritual_date) DO UPDATE SET
+            startup_completed_at = excluded.startup_completed_at,
+            shutdown_completed_at = excluded.shutdown_completed_at,
+            wins = excluded.wins,
+            blockers = excluded.blockers,
+            tomorrow_first_task_id = excluded.tomorrow_first_task_id,
+            tomorrow_first_task_name = excluded.tomorrow_first_task_name,
+            updated_at = excluded.updated_at
+        """,
+        (
+            ritual_date,
+            _valid_timestamp(payload.get("startup_completed_at")),
+            _valid_timestamp(payload.get("shutdown_completed_at")),
+            _text(payload.get("wins"), 5_000),
+            _text(payload.get("blockers"), 5_000),
+            _optional_text(payload.get("tomorrow_first_task_id"), 300),
+            _text(payload.get("tomorrow_first_task_name"), 300),
+            _valid_timestamp(payload.get("updated_at")) or timestamp,
+        ),
+    )
+
+
+def _upsert_weekly_plan(
+    connection,
+    entity_id: str,
+    payload: dict[str, object],
+    timestamp: str,
+) -> None:
+    week_start = _date_text(payload.get("week_start")) or _date_text(entity_id)
+    if not week_start:
+        return
+    connection.execute(
+        """
+        INSERT INTO weekly_plans (week_start, objectives, intention, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(week_start) DO UPDATE SET
+            objectives = excluded.objectives,
+            intention = excluded.intention,
+            updated_at = excluded.updated_at
+        """,
+        (
+            week_start,
+            _text(payload.get("objectives"), 5_000),
+            _text(payload.get("intention"), 500),
+            _valid_timestamp(payload.get("updated_at")) or timestamp,
+        ),
+    )
+
+
+def _upsert_weekly_review(
+    connection,
+    entity_id: str,
+    payload: dict[str, object],
+    timestamp: str,
+) -> None:
+    week_start = _date_text(payload.get("week_start")) or _date_text(entity_id)
+    if not week_start:
+        return
+    rating = min(5, max(1, _nonnegative_int(payload.get("rating"), maximum=5)))
+    connection.execute(
+        """
+        INSERT INTO weekly_reviews (
+            week_start, rating, wins, blockers, adjustments, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(week_start) DO UPDATE SET
+            rating = excluded.rating,
+            wins = excluded.wins,
+            blockers = excluded.blockers,
+            adjustments = excluded.adjustments,
+            updated_at = excluded.updated_at
+        """,
+        (
+            week_start,
+            rating,
+            _text(payload.get("wins"), 2_000),
+            _text(payload.get("blockers"), 2_000),
+            _text(payload.get("adjustments"), 2_000),
+            _valid_timestamp(payload.get("updated_at")) or timestamp,
+        ),
+    )
 
 
 def _upsert_habit(connection, entity_id: str, payload: dict, timestamp: str) -> None:

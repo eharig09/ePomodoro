@@ -92,12 +92,43 @@ class DailyPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class DailyRitual:
+    ritual_date: date
+    startup_completed_at: datetime | None
+    shutdown_completed_at: datetime | None
+    wins: str
+    blockers: str
+    tomorrow_first_task_id: str | None
+    tomorrow_first_task_name: str
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class WeeklyPlan:
+    week_start: date
+    objectives: str
+    intention: str
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class WeeklyReview:
     week_start: date
     rating: int
     wins: str
     blockers: str
     adjustments: str
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class CalendarSource:
+    id: str
+    name: str
+    provider: str
+    event_count: int
+    last_refreshed_at: datetime
+    created_at: datetime
     updated_at: datetime
 
 
