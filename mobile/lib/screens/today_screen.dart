@@ -87,19 +87,34 @@ class _TodayScreenState extends State<TodayScreen> {
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-          child: SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment(value: false, label: Text('Due today')),
-              ButtonSegment(value: true, label: Text('All active')),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: false, label: Text('Due today')),
+                  ButtonSegment(value: true, label: Text('All active')),
+                ],
+                selected: {_showAll},
+                onSelectionChanged: (value) =>
+                    setState(() => _showAll = value.first),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _showAll
+                    ? '${visible.length} active task${visible.length == 1 ? '' : 's'}'
+                    : '${visible.length} task${visible.length == 1 ? '' : 's'} due today',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ],
-            selected: {_showAll},
-            onSelectionChanged: (value) =>
-                setState(() => _showAll = value.first),
           ),
         ),
         Expanded(
           child: grouped.isEmpty
-              ? _EmptyTasks(hasTodoist: controller.hasTodoistToken)
+              ? _EmptyTasks(
+                  hasTodoist: controller.hasTodoistToken,
+                  dueToday: !_showAll,
+                )
               : ListView.separated(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                   scrollDirection: Axis.horizontal,
@@ -216,8 +231,9 @@ class _TaskTile extends StatelessWidget {
 }
 
 class _EmptyTasks extends StatelessWidget {
-  const _EmptyTasks({required this.hasTodoist});
+  const _EmptyTasks({required this.hasTodoist, required this.dueToday});
   final bool hasTodoist;
+  final bool dueToday;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -234,7 +250,9 @@ class _EmptyTasks extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            hasTodoist
+            dueToday
+                ? 'No tasks have a due date of today. Switch to All active to see everything else.'
+                : hasTodoist
                 ? 'Sync Todoist or add a local focus task.'
                 : 'Add a local task, or connect Todoist in Settings.',
             textAlign: TextAlign.center,

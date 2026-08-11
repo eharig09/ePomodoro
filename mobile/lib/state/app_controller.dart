@@ -109,6 +109,9 @@ class AppController extends ChangeNotifier {
       loading = false;
       notifyListeners();
     }
+    if (cloudSession != null) {
+      unawaited(syncCloud());
+    }
   }
 
   Future<void> reload() async {
@@ -410,6 +413,9 @@ class AppController extends ChangeNotifier {
     await store.saveReflection(DateTime.now(), reflection);
     journalEntries = await store.loadJournalEntries();
     notifyListeners();
+    if (cloudSession != null) {
+      unawaited(syncCloud());
+    }
   }
 
   Future<void> updateSession(FocusSession session) async {

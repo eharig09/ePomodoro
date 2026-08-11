@@ -19,7 +19,8 @@ void main() {
     expect(habit.isDue(DateTime(2026, 8, 12)), isTrue); // Wednesday
   });
 
-  test('local tasks are visible in the due-today view', () {
+  test('only tasks with today as their due date are due today', () {
+    final today = DateTime.now();
     const task = TaskItem(
       id: 'local-1',
       title: 'Plan tomorrow',
@@ -27,8 +28,26 @@ void main() {
       priority: 1,
       source: TaskSource.local,
     );
+    final dueToday = TaskItem(
+      id: 'todoist-today',
+      title: 'Due today',
+      project: 'Work',
+      priority: 2,
+      source: TaskSource.todoist,
+      dueDate: DateTime(today.year, today.month, today.day),
+    );
+    final dueTomorrow = TaskItem(
+      id: 'todoist-tomorrow',
+      title: 'Due tomorrow',
+      project: 'Work',
+      priority: 2,
+      source: TaskSource.todoist,
+      dueDate: DateTime(today.year, today.month, today.day + 1),
+    );
 
-    expect(task.isDueToday, isTrue);
+    expect(task.isDueToday, isFalse);
+    expect(dueToday.isDueToday, isTrue);
+    expect(dueTomorrow.isDueToday, isFalse);
   });
 
   test('day key is zero padded', () {

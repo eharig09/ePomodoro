@@ -27,7 +27,7 @@ class TaskItem {
 
   bool get isCompleted => completedAt != null;
   bool get isDueToday {
-    if (source == TaskSource.local || dueDate == null) return true;
+    if (dueDate == null) return false;
     final now = DateTime.now();
     final localDue = dueDate!.toLocal();
     return localDue.year == now.year &&

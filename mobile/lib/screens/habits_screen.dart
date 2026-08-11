@@ -13,6 +13,7 @@ class HabitsScreen extends StatefulWidget {
 class _HabitsScreenState extends State<HabitsScreen> {
   final _journal = TextEditingController();
   bool _reflectionLoaded = false;
+  bool _showJournal = false;
   int _mood = 3;
   String _journalPrompt = 'Free write';
 
@@ -45,27 +46,50 @@ class _HabitsScreenState extends State<HabitsScreen> {
       children: [
         Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Habits',
+                  const Text(
+                    'Habits & journal',
                     style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700),
                   ),
-                  Text('Streaks count only the days you planned.'),
+                  Text(
+                    _showJournal
+                        ? 'Review your mood and writing history.'
+                        : 'Streaks count only the days you planned.',
+                  ),
                 ],
               ),
             ),
-            FilledButton.tonalIcon(
-              onPressed: () => _addHabitDialog(context),
-              icon: const Icon(Icons.add),
-              label: const Text('Add'),
-            ),
+            if (!_showJournal)
+              FilledButton.tonalIcon(
+                onPressed: () => _addHabitDialog(context),
+                icon: const Icon(Icons.add),
+                label: const Text('Add'),
+              ),
           ],
         ),
+        const SizedBox(height: 14),
+        SegmentedButton<bool>(
+          segments: const [
+            ButtonSegment(
+              value: false,
+              icon: Icon(Icons.checklist_rounded),
+              label: Text('Habits'),
+            ),
+            ButtonSegment(
+              value: true,
+              icon: Icon(Icons.menu_book_outlined),
+              label: Text('Journal'),
+            ),
+          ],
+          selected: {_showJournal},
+          onSelectionChanged: (value) =>
+              setState(() => _showJournal = value.first),
+        ),
         const SizedBox(height: 18),
-        if (groups.isEmpty)
+        if (!_showJournal && groups.isEmpty)
           const Card(
             child: Padding(
               padding: EdgeInsets.all(24),
@@ -75,149 +99,157 @@ class _HabitsScreenState extends State<HabitsScreen> {
               ),
             ),
           ),
-        for (final group in groups.entries) ...[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 14, 4, 6),
-            child: Text(
-              '${group.value.first.emoji}  ${group.key}',
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+        if (!_showJournal)
+          for (final group in groups.entries) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 14, 4, 6),
+              child: Text(
+                '${group.value.first.emoji}  ${group.key}',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+              ),
             ),
-          ),
-          for (final habit in group.value) _HabitCard(habit: habit),
-        ],
-        const SizedBox(height: 18),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Mood & quick journal',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final entry in const [
-                      '😞 Low',
-                      '😕 Rough',
-                      '😐 Okay',
-                      '🙂 Good',
-                      '😄 Great',
-                    ].indexed)
-                      ChoiceChip(
-                        label: Text(entry.$2),
-                        selected: _mood == entry.$1 + 1,
-                        onSelected: (_) => setState(() => _mood = entry.$1 + 1),
+            for (final habit in group.value) _HabitCard(habit: habit),
+          ],
+        if (_showJournal)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Today’s reflection',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final entry in const [
+                        '😞 Low',
+                        '😕 Rough',
+                        '😐 Okay',
+                        '🙂 Good',
+                        '😄 Great',
+                      ].indexed)
+                        ChoiceChip(
+                          label: Text(entry.$2),
+                          selected: _mood == entry.$1 + 1,
+                          onSelected: (_) =>
+                              setState(() => _mood = entry.$1 + 1),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _journalPrompt,
+                    decoration: const InputDecoration(
+                      labelText: 'Writing prompt',
+                      prefixIcon: Icon(Icons.lightbulb_outline),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'Free write',
+                        child: Text('Free write'),
                       ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: _journalPrompt,
-                  decoration: const InputDecoration(
-                    labelText: 'Writing prompt',
-                    prefixIcon: Icon(Icons.lightbulb_outline),
+                      DropdownMenuItem(value: 'Wins', child: Text('Wins')),
+                      DropdownMenuItem(
+                        value: 'Challenges',
+                        child: Text('Challenges'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Gratitude',
+                        child: Text('Gratitude'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Tomorrow',
+                        child: Text('Tomorrow’s focus'),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => _journalPrompt = value ?? 'Free write'),
                   ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'Free write',
-                      child: Text('Free write'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _journal,
+                    minLines: 5,
+                    maxLines: 10,
+                    maxLength: 10000,
+                    keyboardType: TextInputType.multiline,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: InputDecoration(
+                      labelText: 'Journal entry',
+                      alignLabelWithHint: true,
+                      hintText: switch (_journalPrompt) {
+                        'Wins' => 'What went well today, even if it was small?',
+                        'Challenges' =>
+                          'What felt difficult, and what did you learn?',
+                        'Gratitude' => 'What are you grateful for today?',
+                        'Tomorrow' => 'What matters most tomorrow?',
+                        _ => 'What is on your mind?',
+                      },
                     ),
-                    DropdownMenuItem(value: 'Wins', child: Text('Wins')),
-                    DropdownMenuItem(
-                      value: 'Challenges',
-                      child: Text('Challenges'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'Gratitude',
-                      child: Text('Gratitude'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'Tomorrow',
-                      child: Text('Tomorrow’s focus'),
-                    ),
-                  ],
-                  onChanged: (value) =>
-                      setState(() => _journalPrompt = value ?? 'Free write'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _journal,
-                  minLines: 5,
-                  maxLines: 10,
-                  maxLength: 10000,
-                  keyboardType: TextInputType.multiline,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: InputDecoration(
-                    labelText: 'Journal entry',
-                    alignLabelWithHint: true,
-                    hintText: switch (_journalPrompt) {
-                      'Wins' => 'What went well today, even if it was small?',
-                      'Challenges' =>
-                        'What felt difficult, and what did you learn?',
-                      'Gratitude' => 'What are you grateful for today?',
-                      'Tomorrow' => 'What matters most tomorrow?',
-                      _ => 'What is on your mind?',
-                    },
                   ),
-                ),
-                const SizedBox(height: 10),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: () async {
-                      await controller.saveReflection(_mood, _journal.text);
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Today’s reflection saved.'),
-                          ),
-                        );
-                      }
-                    },
-                    child: const Text('Save reflection'),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      onPressed: () async {
+                        await controller.saveReflection(_mood, _journal.text);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Today’s reflection saved.'),
+                            ),
+                          );
+                        }
+                      },
+                      child: const Text('Save reflection'),
+                    ),
                   ),
-                ),
-                if (controller.journalEntries.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   const Divider(),
                   const SizedBox(height: 4),
                   Text(
-                    'Recent entries',
-                    style: Theme.of(context).textTheme.titleSmall,
+                    'Journal history',
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  for (final entry in controller.journalEntries.take(7))
-                    ExpansionTile(
-                      tilePadding: EdgeInsets.zero,
-                      title: Text(
-                        '${const ['😞', '😕', '😐', '🙂', '😄'][entry.mood - 1]}  '
-                        '${entry.entryDate.month}/${entry.entryDate.day}/${entry.entryDate.year}',
-                      ),
-                      children: [
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: SelectableText(
-                              entry.journal.isEmpty
-                                  ? 'No journal text for this day.'
-                                  : entry.journal,
+                  const SizedBox(height: 4),
+                  Text(
+                    controller.journalEntries.isEmpty
+                        ? 'No saved entries are available on this device yet. Run account sync in Settings to retrieve entries from another device.'
+                        : '${controller.journalEntries.length} saved entr${controller.journalEntries.length == 1 ? 'y' : 'ies'} · newest first',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  if (controller.journalEntries.isNotEmpty)
+                    for (final entry in controller.journalEntries.take(30))
+                      ExpansionTile(
+                        tilePadding: EdgeInsets.zero,
+                        title: Text(
+                          '${const ['😞', '😕', '😐', '🙂', '😄'][entry.mood - 1]}  '
+                          '${entry.entryDate.month}/${entry.entryDate.day}/${entry.entryDate.year}',
+                        ),
+                        children: [
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: SelectableText(
+                                entry.journal.isEmpty
+                                    ? 'No journal text for this day.'
+                                    : entry.journal,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
                 ],
-              ],
+              ),
             ),
           ),
-        ),
       ],
     );
   }
