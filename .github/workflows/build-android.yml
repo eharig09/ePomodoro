@@ -27,7 +27,6 @@ jobs:
     timeout-minutes: 35
     env:
       FLUTTER_REVISION: 6b182d2c7585eba26d4edce0f97630effd256c33
-      FLUTTER_HOME: ${{ runner.temp }}/flutter
 
     steps:
       - name: Check out the project
@@ -43,11 +42,12 @@ jobs:
       - name: Install pinned Flutter SDK
         shell: bash
         run: |
-          git init "$FLUTTER_HOME"
-          git -C "$FLUTTER_HOME" remote add origin https://github.com/flutter/flutter.git
-          git -C "$FLUTTER_HOME" fetch --depth 1 origin "$FLUTTER_REVISION"
-          git -C "$FLUTTER_HOME" checkout --detach FETCH_HEAD
-          echo "$FLUTTER_HOME/bin" >> "$GITHUB_PATH"
+          flutter_home="$RUNNER_TEMP/flutter"
+          git init "$flutter_home"
+          git -C "$flutter_home" remote add origin https://github.com/flutter/flutter.git
+          git -C "$flutter_home" fetch --depth 1 origin "$FLUTTER_REVISION"
+          git -C "$flutter_home" checkout --detach FETCH_HEAD
+          echo "$flutter_home/bin" >> "$GITHUB_PATH"
 
       - name: Resolve dependencies
         working-directory: mobile
