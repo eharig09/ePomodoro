@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../state/app_controller.dart';
 import 'today_screen.dart';
 
 class FocusScreen extends StatelessWidget {
@@ -26,7 +27,7 @@ class FocusScreen extends StatelessWidget {
         Text(
           controller.timerRunning
               ? 'Stay with this one thing.'
-              : 'Choose a task and make the next block count.',
+              : 'Choose a task, or use Generic focus with no linked task.',
         ),
         const SizedBox(height: 20),
         SegmentedButton<bool>(
@@ -57,27 +58,37 @@ class FocusScreen extends StatelessWidget {
           const SizedBox(height: 16),
           DropdownButtonFormField<String>(
             initialValue:
-                controller.timerTask != null &&
-                    controller.tasks.any(
-                      (task) => task.id == controller.timerTask!.id,
-                    )
+                controller.timerTask?.id == AppController.genericFocusTask.id
+                ? AppController.genericFocusTask.id
+                : controller.timerTask != null &&
+                      controller.tasks.any(
+                        (task) => task.id == controller.timerTask!.id,
+                      )
                 ? controller.timerTask!.id
                 : null,
             decoration: const InputDecoration(
               labelText: 'Focus task',
               prefixIcon: Icon(Icons.task_alt),
             ),
-            items: controller.tasks
-                .map(
-                  (task) => DropdownMenuItem(
-                    value: task.id,
-                    child: Text(task.title, overflow: TextOverflow.ellipsis),
-                  ),
-                )
-                .toList(),
+            items: [
+              const DropdownMenuItem(
+                value: 'generic:focus',
+                child: Text('Generic focus · no linked task'),
+              ),
+              ...controller.tasks.map(
+                (task) => DropdownMenuItem(
+                  value: task.id,
+                  child: Text(task.title, overflow: TextOverflow.ellipsis),
+                ),
+              ),
+            ],
             onChanged: controller.timerRunning
                 ? null
                 : (id) {
+                    if (id == AppController.genericFocusTask.id) {
+                      controller.configureTimer(generic: true);
+                      return;
+                    }
                     final task = controller.tasks
                         .where((task) => task.id == id)
                         .firstOrNull;

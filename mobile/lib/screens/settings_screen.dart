@@ -17,7 +17,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _loaded = false;
   bool _showToken = false;
   bool _showPassword = false;
-  bool _importLocal = false;
+  bool _importLocal = true;
 
   @override
   void didChangeDependencies() {
@@ -107,6 +107,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 4),
                 const Text(
                   'Paste a personal API token to import active tasks, complete them, and recognize habit completions from the previous 45 days.',
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'For security, Todoist credentials do not cloud-sync. Paste the same token once on each device.',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 14),
                 TextField(
@@ -207,7 +212,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 18),
         Center(
           child: Text(
-            'ePomodoro Mobile 0.2.0',
+            'ePomodoro Mobile 0.2.1',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
@@ -298,7 +303,7 @@ class _AccountCard extends StatelessWidget {
               ),
             ] else ...[
               const Text(
-                'Use one account to sync local tasks, focus history, habits, check-ins, moods, and journal entries with desktop.',
+                'Use one account to sync local tasks, focus history, habits, check-ins, moods, and journal entries with desktop. Goals remain preserved in the desktop account profile.',
               ),
               const SizedBox(height: 12),
               TextField(
@@ -335,7 +340,7 @@ class _AccountCard extends StatelessWidget {
                   'Copy this device’s local data into my account',
                 ),
                 subtitle: const Text(
-                  'Use once when this device already has the data you want.',
+                  'Recommended when this device already has data. It is merged with cloud data after sign-in.',
                 ),
                 controlAffinity: ListTileControlAffinity.leading,
               ),

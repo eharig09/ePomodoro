@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 from typing import Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -336,11 +337,80 @@ def activate_cloud_profile(user_id: str, *, import_local: bool = False) -> Path:
     os.environ.setdefault("FOCUS_BASE_DB_PATH", str(base))
     target = profile_database_path(user_id)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if import_local and base.exists() and not target.exists():
-        shutil.copy2(base, target)
+    if import_local and base.exists():
+        if not target.exists():
+            shutil.copy2(base, target)
+        elif base != target:
+            _merge_local_data(base, target)
     os.environ["FOCUS_DB_PATH"] = str(target)
     os.environ["FOCUS_CLOUD_USER_ID"] = str(UUID(user_id))
     return target
+
+
+def _merge_local_data(source: Path, target: Path) -> None:
+    """Add missing productivity rows to an existing account profile.
+
+    Existing account rows win on key conflicts. Sync bookkeeping and device-only
+    settings are deliberately excluded.
+    """
+    ordered_tables = (
+        "local_focus_tasks",
+        "focus_sessions",
+        "habit_definitions",
+        "habit_task_links",
+        "habit_label_links",
+        "habit_daily_checkins",
+        "habit_group_settings",
+        "daily_reflections",
+        "goals",
+        "goal_links",
+        "task_preferences",
+        "daily_plans",
+        "daily_plan_items",
+        "weekly_reviews",
+    )
+    with sqlite3.connect(target) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("ATTACH DATABASE ? AS local_source", (str(source),))
+        target_tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM main.sqlite_master WHERE type = 'table'"
+            )
+        }
+        source_tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM local_source.sqlite_master WHERE type = 'table'"
+            )
+        }
+        for table in ordered_tables:
+            if table not in target_tables or table not in source_tables:
+                continue
+            target_columns = {
+                str(row[1])
+                for row in connection.execute(f'PRAGMA main.table_info("{table}")')
+            }
+            source_columns = {
+                str(row[1])
+                for row in connection.execute(
+                    f'PRAGMA local_source.table_info("{table}")'
+                )
+            }
+            columns = sorted(target_columns.intersection(source_columns))
+            columns = [
+                column
+                for column in columns
+                if column.replace("_", "").isalnum() and not column[0].isdigit()
+            ]
+            if not columns:
+                continue
+            names = ", ".join(f'"{column}"' for column in columns)
+            connection.execute(
+                f'INSERT OR IGNORE INTO main."{table}" ({names}) '
+                f'SELECT {names} FROM local_source."{table}"'
+            )
+        connection.commit()
 
 
 def activate_stored_cloud_profile() -> CloudSession | None:

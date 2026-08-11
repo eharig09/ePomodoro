@@ -14,6 +14,7 @@ class _HabitsScreenState extends State<HabitsScreen> {
   final _journal = TextEditingController();
   bool _reflectionLoaded = false;
   int _mood = 3;
+  String _journalPrompt = 'Free write';
 
   @override
   void didChangeDependencies() {
@@ -69,7 +70,7 @@ class _HabitsScreenState extends State<HabitsScreen> {
             child: Padding(
               padding: EdgeInsets.all(24),
               child: Text(
-                'Create a habit with its planned weekdays. Add a Todoist label if any task carrying that label should count for the habit.',
+                'Create a manual habit, match a Todoist task name, or use a Todoist label. Planned weekdays control streaks.',
                 textAlign: TextAlign.center,
               ),
             ),
@@ -98,45 +99,72 @@ class _HabitsScreenState extends State<HabitsScreen> {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
                     for (final entry in const [
-                      '😞',
-                      '😕',
-                      '😐',
-                      '🙂',
-                      '😄',
+                      '😞 Low',
+                      '😕 Rough',
+                      '😐 Okay',
+                      '🙂 Good',
+                      '😄 Great',
                     ].indexed)
-                      InkWell(
-                        borderRadius: BorderRadius.circular(28),
-                        onTap: () => setState(() => _mood = entry.$1 + 1),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: _mood == entry.$1 + 1
-                                ? Theme.of(context).colorScheme.primaryContainer
-                                : Colors.transparent,
-                          ),
-                          child: Text(
-                            entry.$2,
-                            style: const TextStyle(fontSize: 26),
-                          ),
-                        ),
+                      ChoiceChip(
+                        label: Text(entry.$2),
+                        selected: _mood == entry.$1 + 1,
+                        onSelected: (_) => setState(() => _mood = entry.$1 + 1),
                       ),
                   ],
                 ),
                 const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: _journalPrompt,
+                  decoration: const InputDecoration(
+                    labelText: 'Writing prompt',
+                    prefixIcon: Icon(Icons.lightbulb_outline),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'Free write',
+                      child: Text('Free write'),
+                    ),
+                    DropdownMenuItem(value: 'Wins', child: Text('Wins')),
+                    DropdownMenuItem(
+                      value: 'Challenges',
+                      child: Text('Challenges'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Gratitude',
+                      child: Text('Gratitude'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Tomorrow',
+                      child: Text('Tomorrow’s focus'),
+                    ),
+                  ],
+                  onChanged: (value) =>
+                      setState(() => _journalPrompt = value ?? 'Free write'),
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: _journal,
-                  minLines: 2,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    labelText: 'A sentence about today',
-                    hintText:
-                        'What helped, what was hard, or what matters next?',
+                  minLines: 5,
+                  maxLines: 10,
+                  maxLength: 10000,
+                  keyboardType: TextInputType.multiline,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: InputDecoration(
+                    labelText: 'Journal entry',
+                    alignLabelWithHint: true,
+                    hintText: switch (_journalPrompt) {
+                      'Wins' => 'What went well today, even if it was small?',
+                      'Challenges' =>
+                        'What felt difficult, and what did you learn?',
+                      'Gratitude' => 'What are you grateful for today?',
+                      'Tomorrow' => 'What matters most tomorrow?',
+                      _ => 'What is on your mind?',
+                    },
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -156,6 +184,36 @@ class _HabitsScreenState extends State<HabitsScreen> {
                     child: const Text('Save reflection'),
                   ),
                 ),
+                if (controller.journalEntries.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const Divider(),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Recent entries',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  for (final entry in controller.journalEntries.take(7))
+                    ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      title: Text(
+                        '${const ['😞', '😕', '😐', '🙂', '😄'][entry.mood - 1]}  '
+                        '${entry.entryDate.month}/${entry.entryDate.day}/${entry.entryDate.year}',
+                      ),
+                      children: [
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: SelectableText(
+                              entry.journal.isEmpty
+                                  ? 'No journal text for this day.'
+                                  : entry.journal,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
               ],
             ),
           ),
@@ -169,6 +227,7 @@ class _HabitsScreenState extends State<HabitsScreen> {
     final group = TextEditingController(text: 'Habits');
     final emoji = TextEditingController(text: '✨');
     final label = TextEditingController();
+    var trackingMode = HabitTrackingMode.manual;
     final weekdays = <int>{0, 1, 2, 3, 4, 5, 6};
     await showDialog<void>(
       context: context,
@@ -204,13 +263,47 @@ class _HabitsScreenState extends State<HabitsScreen> {
                   ],
                 ),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: label,
+                DropdownButtonFormField<HabitTrackingMode>(
+                  initialValue: trackingMode,
                   decoration: const InputDecoration(
-                    labelText: 'Todoist label (optional)',
-                    helperText: 'Any completed task with this label counts.',
+                    labelText: 'How this habit is completed',
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: HabitTrackingMode.manual,
+                      child: Text('Manual check-in'),
+                    ),
+                    DropdownMenuItem(
+                      value: HabitTrackingMode.taskName,
+                      child: Text('Match Todoist task name'),
+                    ),
+                    DropdownMenuItem(
+                      value: HabitTrackingMode.todoistLabel,
+                      child: Text('Match Todoist label'),
+                    ),
+                  ],
+                  onChanged: (value) => setDialogState(
+                    () => trackingMode = value ?? HabitTrackingMode.manual,
                   ),
                 ),
+                if (trackingMode == HabitTrackingMode.todoistLabel) ...[
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: label,
+                    decoration: const InputDecoration(
+                      labelText: 'Todoist label',
+                      helperText: 'Any completed task with this label counts.',
+                    ),
+                  ),
+                ] else if (trackingMode == HabitTrackingMode.taskName) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    'A Todoist task with the same name will count automatically.',
+                  ),
+                ] else ...[
+                  const SizedBox(height: 8),
+                  const Text('Check this habit off directly in ePomodoro.'),
+                ],
                 const SizedBox(height: 14),
                 const Align(
                   alignment: Alignment.centerLeft,
@@ -250,12 +343,18 @@ class _HabitsScreenState extends State<HabitsScreen> {
             ),
             FilledButton(
               onPressed: () async {
-                if (name.text.trim().isEmpty || weekdays.isEmpty) return;
+                if (name.text.trim().isEmpty ||
+                    weekdays.isEmpty ||
+                    (trackingMode == HabitTrackingMode.todoistLabel &&
+                        label.text.trim().isEmpty)) {
+                  return;
+                }
                 await AppScope.of(context).addHabit(
                   name: name.text,
                   groupName: group.text,
                   emoji: emoji.text,
                   weekdays: weekdays,
+                  trackingMode: trackingMode,
                   todoistLabel: label.text,
                 );
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
@@ -311,7 +410,11 @@ class _HabitCard extends StatelessWidget {
                       ),
                       Text(
                         'Current ${streaks.current} · Best ${streaks.best}'
-                        '${habit.todoistLabel.isEmpty ? '' : ' · @${habit.todoistLabel}'}',
+                        ' · ${switch (habit.trackingMode) {
+                          HabitTrackingMode.manual => 'Manual',
+                          HabitTrackingMode.taskName => 'Task name match',
+                          HabitTrackingMode.todoistLabel => '@${habit.todoistLabel}',
+                        }}',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],

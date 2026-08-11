@@ -350,6 +350,21 @@ def test_group_icons_and_daily_reflection_are_persistent(tmp_path) -> None:
     assert len(get_daily_reflections(db_path)) == 1
 
 
+def test_daily_reflection_supports_long_journal_entries(tmp_path) -> None:
+    db_path = tmp_path / "focus.db"
+    init_db(db_path)
+    journal = "A" * 10_000
+
+    saved = save_daily_reflection(
+        datetime(2026, 8, 10).date(),
+        mood=4,
+        journal=journal,
+        db_path=db_path,
+    )
+
+    assert saved.journal == journal
+
+
 def test_plans_goals_preferences_reviews_and_sync_runs_are_persistent(tmp_path) -> None:
     db_path = tmp_path / "focus.db"
     init_db(db_path)

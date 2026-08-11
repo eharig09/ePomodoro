@@ -1,5 +1,7 @@
 enum TaskSource { local, todoist }
 
+enum HabitTrackingMode { manual, taskName, todoistLabel }
+
 class TaskItem {
   const TaskItem({
     required this.id,
@@ -41,6 +43,7 @@ class HabitItem {
     required this.groupName,
     required this.emoji,
     required this.weekdays,
+    this.trackingMode = HabitTrackingMode.manual,
     this.todoistLabel = '',
   });
 
@@ -49,6 +52,7 @@ class HabitItem {
   final String groupName;
   final String emoji;
   final Set<int> weekdays;
+  final HabitTrackingMode trackingMode;
   final String todoistLabel;
 
   bool isDue(DateTime day) => weekdays.contains(day.weekday - 1);
@@ -105,6 +109,18 @@ class FocusSession {
 class DailyReflection {
   const DailyReflection({required this.mood, required this.journal});
 
+  final int mood;
+  final String journal;
+}
+
+class JournalEntry {
+  const JournalEntry({
+    required this.entryDate,
+    required this.mood,
+    required this.journal,
+  });
+
+  final DateTime entryDate;
   final int mood;
   final String journal;
 }

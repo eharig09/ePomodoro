@@ -21,7 +21,7 @@ class LocalStore {
     final root = await getDatabasesPath();
     _database = await openDatabase(
       p.join(root, _databaseFileName),
-      version: 2,
+      version: 3,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: (db, _) => _createSchema(db),
       onUpgrade: (db, oldVersion, _) async {
@@ -42,6 +42,15 @@ class LocalStore {
             'ALTER TABLE reflections ADD COLUMN updated_at TEXT',
           );
           await _createSyncTables(db);
+        }
+        if (oldVersion < 3) {
+          await db.execute(
+            "ALTER TABLE habits ADD COLUMN tracking_mode TEXT NOT NULL DEFAULT 'taskName'",
+          );
+          await db.execute(
+            "UPDATE habits SET tracking_mode = 'todoistLabel' "
+            "WHERE TRIM(todoist_label) <> ''",
+          );
         }
       },
     );
@@ -83,6 +92,7 @@ class LocalStore {
             group_name TEXT NOT NULL,
             emoji TEXT NOT NULL,
             weekdays TEXT NOT NULL,
+            tracking_mode TEXT NOT NULL DEFAULT 'manual',
             todoist_label TEXT NOT NULL DEFAULT '',
             created_at TEXT,
             updated_at TEXT
@@ -152,12 +162,58 @@ class LocalStore {
     final targetPath = cleanId == null
         ? localPath
         : p.join(root, 'epomodoro_$cleanId.db');
-    if (importLocal && cleanId != null && !await databaseExists(targetPath)) {
-      if (await databaseExists(localPath)) {
+    final localExists = await databaseExists(localPath);
+    final targetExisted = await databaseExists(targetPath);
+    if (importLocal && cleanId != null && !targetExisted) {
+      if (localExists) {
         await File(localPath).copy(targetPath);
       }
     }
     _profileId = cleanId;
+    if (importLocal && cleanId != null && localExists && targetExisted) {
+      await _mergeLocalData(localPath);
+    }
+  }
+
+  Future<void> _mergeLocalData(String localPath) async {
+    final db = await database;
+    const tables = [
+      'tasks',
+      'focus_sessions',
+      'habits',
+      'habit_checkins',
+      'reflections',
+    ];
+    await db.execute('ATTACH DATABASE ? AS local_source', [localPath]);
+    try {
+      final targetTables = (await db.rawQuery(
+        "SELECT name FROM main.sqlite_master WHERE type = 'table'",
+      )).map((row) => row['name']?.toString()).whereType<String>().toSet();
+      final sourceTables = (await db.rawQuery(
+        "SELECT name FROM local_source.sqlite_master WHERE type = 'table'",
+      )).map((row) => row['name']?.toString()).whereType<String>().toSet();
+      for (final table in tables) {
+        if (!targetTables.contains(table) || !sourceTables.contains(table)) {
+          continue;
+        }
+        final targetColumns = (await db.rawQuery(
+          'PRAGMA main.table_info("$table")',
+        )).map((row) => row['name']?.toString()).whereType<String>().toSet();
+        final sourceColumns = (await db.rawQuery(
+          'PRAGMA local_source.table_info("$table")',
+        )).map((row) => row['name']?.toString()).whereType<String>().toSet();
+        final columns = targetColumns.intersection(sourceColumns).toList()
+          ..sort();
+        final names = columns.map((column) => '"$column"').join(', ');
+        if (names.isEmpty) continue;
+        await db.execute(
+          'INSERT OR IGNORE INTO main."$table" ($names) '
+          'SELECT $names FROM local_source."$table"',
+        );
+      }
+    } finally {
+      await db.execute('DETACH DATABASE local_source');
+    }
   }
 
   Future<List<TaskItem>> loadTasks() async {
@@ -252,6 +308,7 @@ class LocalStore {
         groupName: row['group_name']! as String,
         emoji: row['emoji']! as String,
         weekdays: weekdays,
+        trackingMode: _habitTrackingMode(row['tracking_mode']),
         todoistLabel: row['todoist_label']! as String,
       );
     }).toList();
@@ -273,6 +330,7 @@ class LocalStore {
       'group_name': habit.groupName,
       'emoji': habit.emoji,
       'weekdays': jsonEncode(habit.weekdays.toList()..sort()),
+      'tracking_mode': habit.trackingMode.name,
       'todoist_label': habit.todoistLabel,
       'created_at': existing.isEmpty
           ? now
@@ -336,6 +394,20 @@ class LocalStore {
       mood: rows.first['mood']! as int,
       journal: rows.first['journal']! as String,
     );
+  }
+
+  Future<List<JournalEntry>> loadJournalEntries() async {
+    final db = await database;
+    final rows = await db.query('reflections', orderBy: 'entry_date DESC');
+    return rows
+        .map(
+          (row) => JournalEntry(
+            entryDate: DateTime.parse(row['entry_date']! as String),
+            mood: row['mood']! as int,
+            journal: row['journal']! as String,
+          ),
+        )
+        .toList();
   }
 
   Future<void> saveReflection(DateTime day, DailyReflection reflection) async {
@@ -425,6 +497,7 @@ class LocalStore {
           'group_name': row['group_name'],
           'emoji': row['emoji'],
           'weekdays': jsonDecode(row['weekdays']! as String),
+          'tracking_mode': row['tracking_mode'],
           'todoist_labels': label.isEmpty ? <String>[] : [label],
           'task_links': <Object?>[],
           'is_active': true,
@@ -609,6 +682,12 @@ class LocalStore {
             : List<int>.generate(7, (index) => index);
         weekdays.sort();
         final labels = payload['todoist_labels'];
+        final trackingMode = _habitTrackingMode(
+          payload['tracking_mode'],
+          fallback: labels is List && labels.isNotEmpty
+              ? HabitTrackingMode.todoistLabel
+              : HabitTrackingMode.manual,
+        );
         await db.insert('habits', {
           'id': id,
           'name': payload['name']?.toString() ?? 'Habit',
@@ -619,6 +698,7 @@ class LocalStore {
                 ? List<int>.generate(7, (index) => index)
                 : weekdays,
           ),
+          'tracking_mode': trackingMode.name,
           'todoist_label': labels is List && labels.isNotEmpty
               ? labels.first.toString()
               : payload['todoist_label']?.toString() ?? '',
@@ -675,6 +755,17 @@ class LocalStore {
         }.contains(status)
         ? status
         : 'continue';
+  }
+
+  HabitTrackingMode _habitTrackingMode(
+    Object? value, {
+    HabitTrackingMode fallback = HabitTrackingMode.manual,
+  }) {
+    final name = value?.toString() ?? '';
+    return HabitTrackingMode.values
+            .where((mode) => mode.name == name)
+            .firstOrNull ??
+        fallback;
   }
 
   TaskItem _taskFromRow(Map<String, Object?> row) => TaskItem(

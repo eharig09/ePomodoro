@@ -266,6 +266,7 @@ tests/                     Focused unit and persistence tests
 - Local tasks have a deliberately small lifecycle: add, focus, and complete; editing and reopening are not included yet.
 - Detailed interruption events are not yet captured separately, although the database schema reserves an `interruptions` table.
 - Analytics use the computer's local timezone and remain intentionally modest.
-- Account sync is manual and currently covers data shared by the desktop and
-  Android views; goals, plans, and weekly reviews remain desktop-only.
+- Account sync runs after sign-in and on demand. Goals and their links are
+  preserved in cloud sync, while goal management, plans, and weekly reviews
+  remain desktop-only views.
 - Notifications, calendar integration, and a hosted public backend are not included.

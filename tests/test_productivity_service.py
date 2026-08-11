@@ -4,12 +4,20 @@ from database.models import DailyReflection, HabitDefinition, TaskPreference
 from services.productivity_service import (
     build_focus_profile,
     calculate_weekly_metrics,
+    energy_level_from_labels,
+    estimate_minutes_from_labels,
     recommend_tasks,
 )
 from services.todoist_service import TodoistTask
 
 
-def task(task_id: str, *, priority: int, due_date: str | None = None) -> TodoistTask:
+def task(
+    task_id: str,
+    *,
+    priority: int,
+    due_date: str | None = None,
+    labels: tuple[str, ...] = (),
+) -> TodoistTask:
     return TodoistTask(
         id=task_id,
         content=f"Task {task_id}",
@@ -18,7 +26,7 @@ def task(task_id: str, *, priority: int, due_date: str | None = None) -> Todoist
         project_name="Work",
         section_id=None,
         priority=priority,
-        labels=(),
+        labels=labels,
         due_date=due_date,
         due_datetime=None,
         url=None,
@@ -48,6 +56,49 @@ def test_recommendations_balance_priority_energy_time_and_goals() -> None:
     assert ranked[0]["task"].id == "quick"
     assert "due today" in ranked[0]["reasons"]
     assert "supports a goal" in ranked[0]["reasons"]
+
+
+def test_todoist_energy_labels_override_saved_task_energy() -> None:
+    timestamp = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
+    labeled = task("labeled", priority=2, labels=("energy-low",))
+    preferences = {
+        "labeled": TaskPreference(
+            "labeled", "Labeled", "Work", "high", 20, timestamp
+        )
+    }
+
+    ranked = recommend_tasks(
+        [labeled],
+        preferences=preferences,
+        current_energy="low",
+        available_minutes=25,
+    )
+
+    assert energy_level_from_labels(("ENERGY_HIGH",)) == "high"
+    assert energy_level_from_labels(("medium energy",)) == "medium"
+    assert ranked[0]["energy_level"] == "low"
+    assert "fits low energy" in ranked[0]["reasons"]
+
+
+def test_todoist_minute_labels_override_saved_estimate() -> None:
+    timestamp = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
+    labeled = task("timed", priority=2, labels=("time-30",))
+    preferences = {
+        "timed": TaskPreference("timed", "Timed", "Work", "medium", 90, timestamp)
+    }
+
+    ranked = recommend_tasks(
+        [labeled],
+        preferences=preferences,
+        current_energy="medium",
+        available_minutes=30,
+    )
+
+    assert estimate_minutes_from_labels(("25min",)) == 25
+    assert estimate_minutes_from_labels(("50 minutes",)) == 50
+    assert estimate_minutes_from_labels(("15",)) == 15
+    assert ranked[0]["estimated_minutes"] == 30
+    assert "fits 30 min" in ranked[0]["reasons"]
 
 
 def test_focus_profile_learns_duration_period_and_mood() -> None:

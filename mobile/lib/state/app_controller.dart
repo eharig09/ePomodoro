@@ -30,6 +30,13 @@ class AppController extends ChangeNotifier {
   }
 
   static const _activeTimerKey = 'active_timer';
+  static const genericFocusTask = TaskItem(
+    id: 'generic:focus',
+    title: 'Generic focus',
+    project: 'Focus',
+    priority: 1,
+    source: TaskSource.local,
+  );
 
   final LocalStore store;
   final TodoistClient todoist;
@@ -50,6 +57,7 @@ class AppController extends ChangeNotifier {
   List<HabitItem> habits = [];
   List<HabitCheckin> checkins = [];
   List<FocusSession> sessions = [];
+  List<JournalEntry> journalEntries = [];
   DailyReflection reflection = const DailyReflection(mood: 3, journal: '');
   bool loading = true;
   bool syncing = false;
@@ -59,7 +67,7 @@ class AppController extends ChangeNotifier {
   String? message;
   DateTime? lastSync;
 
-  TaskItem? timerTask;
+  TaskItem? timerTask = genericFocusTask;
   int timerMinutes = 25;
   int remainingSeconds = 25 * 60;
   bool timerRunning = false;
@@ -108,6 +116,7 @@ class AppController extends ChangeNotifier {
     habits = await store.loadHabits();
     checkins = await store.loadCheckins();
     sessions = await store.loadSessions();
+    journalEntries = await store.loadJournalEntries();
     reflection =
         await store.loadReflection(DateTime.now()) ??
         const DailyReflection(mood: 3, journal: '');
@@ -206,10 +215,11 @@ class AppController extends ChangeNotifier {
       if (session == null) {
         message = 'Account created. Confirm your email, then sign in.';
       } else {
-        await store.useProfile(session.userId);
+        await store.useProfile(session.userId, importLocal: true);
         cloudSession = session;
         await _loadProfile();
-        message = 'Account created and signed in.';
+        cloudSyncing = false;
+        await syncCloud();
       }
     } on CloudException catch (error) {
       message = error.message;
@@ -260,7 +270,7 @@ class AppController extends ChangeNotifier {
     habits = [];
     checkins = [];
     sessions = [];
-    timerTask = null;
+    timerTask = genericFocusTask;
     timerRunning = false;
     timerStartedAt = null;
     timerEndAt = null;
@@ -315,6 +325,7 @@ class AppController extends ChangeNotifier {
     required String groupName,
     required String emoji,
     required Set<int> weekdays,
+    required HabitTrackingMode trackingMode,
     required String todoistLabel,
   }) async {
     final habit = HabitItem(
@@ -323,7 +334,10 @@ class AppController extends ChangeNotifier {
       groupName: groupName.trim().isEmpty ? 'Habits' : groupName.trim(),
       emoji: emoji.trim().isEmpty ? '✨' : emoji.trim(),
       weekdays: weekdays,
-      todoistLabel: todoistLabel.trim(),
+      trackingMode: trackingMode,
+      todoistLabel: trackingMode == HabitTrackingMode.todoistLabel
+          ? todoistLabel.trim()
+          : '',
     );
     await store.saveHabit(habit);
     habits = await store.loadHabits();
@@ -387,8 +401,14 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> saveReflection(int mood, String journal) async {
+    if (journal.trim().length > 10000) {
+      message = 'Journal entries can be up to 10,000 characters.';
+      notifyListeners();
+      return;
+    }
     reflection = DailyReflection(mood: mood, journal: journal.trim());
     await store.saveReflection(DateTime.now(), reflection);
+    journalEntries = await store.loadJournalEntries();
     notifyListeners();
   }
 
@@ -416,9 +436,18 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void configureTimer({TaskItem? task, int? minutes, bool? isBreak}) {
+  void configureTimer({
+    TaskItem? task,
+    int? minutes,
+    bool? isBreak,
+    bool generic = false,
+  }) {
     if (timerRunning) return;
-    if (task != null) timerTask = task;
+    if (generic) {
+      timerTask = genericFocusTask;
+    } else if (task != null) {
+      timerTask = task;
+    }
     if (minutes != null) {
       timerMinutes = minutes;
       remainingSeconds = minutes * 60;
@@ -543,7 +572,9 @@ class AppController extends ChangeNotifier {
       timerStartedAt = DateTime.tryParse(data['started_at']?.toString() ?? '');
       timerEndAt = DateTime.tryParse(data['end_at']?.toString() ?? '');
       final taskId = data['task_id']?.toString();
-      timerTask = tasks.where((task) => task.id == taskId).firstOrNull;
+      timerTask = taskId == genericFocusTask.id
+          ? genericFocusTask
+          : tasks.where((task) => task.id == taskId).firstOrNull;
       if (timerRunning && timerEndAt != null) {
         _updateRemaining();
         if (remainingSeconds <= 0) {
@@ -566,9 +597,12 @@ class AppController extends ChangeNotifier {
     final foldedLabels = labels.map((label) => label.toLowerCase()).toSet();
     for (final habit in habits) {
       final labelMatch =
+          habit.trackingMode == HabitTrackingMode.todoistLabel &&
           habit.todoistLabel.isNotEmpty &&
           foldedLabels.contains(habit.todoistLabel.toLowerCase());
-      final nameMatch = habit.name.toLowerCase() == content.toLowerCase();
+      final nameMatch =
+          habit.trackingMode == HabitTrackingMode.taskName &&
+          habit.name.toLowerCase() == content.toLowerCase();
       if (labelMatch || nameMatch) {
         await store.setHabitCheckin(
           habitId: habit.id,

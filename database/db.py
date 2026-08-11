@@ -824,8 +824,8 @@ def save_daily_reflection(
     clean_journal = journal.strip()
     if mood not in range(1, 6):
         raise ValueError("Mood must be between 1 and 5")
-    if len(clean_journal) > 1_000:
-        raise ValueError("Journal entry must be 1,000 characters or fewer")
+    if len(clean_journal) > 10_000:
+        raise ValueError("Journal entry must be 10,000 characters or fewer")
     updated_at = datetime.now(timezone.utc)
     with connect(db_path) as connection, connection:
         connection.execute(

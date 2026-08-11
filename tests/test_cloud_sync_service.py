@@ -5,9 +5,13 @@ from pathlib import Path
 
 from database.db import (
     connect,
+    create_goal,
     create_local_focus_task,
     get_daily_reflection,
+    get_goal_links,
+    get_goals,
     init_db,
+    save_goal_links,
 )
 from services.cloud_sync_service import apply_remote_records, synchronize_cloud
 
@@ -105,3 +109,36 @@ def test_sync_detects_local_changes_and_deletions(tmp_path: Path) -> None:
 
     assert second.pushed == 1
     assert cloud.posts[-1][0]["deleted_at"] is not None
+
+
+def test_goals_and_links_round_trip_through_cloud_sync(tmp_path: Path) -> None:
+    source = tmp_path / "source.db"
+    target = tmp_path / "target.db"
+    init_db(source)
+    init_db(target)
+    goal = create_goal(
+        "Finish the course",
+        description="Complete the final module",
+        db_path=source,
+    )
+    save_goal_links(
+        goal.id,
+        [("habit", "habit-1", "Study")],
+        db_path=source,
+    )
+    cloud = FakeCloudAccount()
+
+    assert synchronize_cloud(cloud, source).pushed == 1
+    assert synchronize_cloud(cloud, target).applied == 1
+
+    restored = get_goals(target)
+    assert len(restored) == 1
+    assert restored[0].name == "Finish the course"
+    assert get_goal_links(target, goal_id=goal.id) == [
+        {
+            "goal_id": goal.id,
+            "entity_type": "habit",
+            "entity_id": "habit-1",
+            "entity_name": "Study",
+        }
+    ]

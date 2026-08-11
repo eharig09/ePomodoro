@@ -256,7 +256,10 @@ def habit_rules_dialog(habit: HabitDefinition | None = None) -> None:
             available_labels,
             default=sorted(existing_labels),
             accept_new_options=True,
-            help="You can type a label that is not currently attached to an active task.",
+            help=(
+                "Optional. Leave labels and tasks empty for a manual habit, or add a "
+                "label so any matching Todoist completion counts."
+            ),
         )
         selected_task_ids = st.multiselect(
             "Specific Todoist tasks",
@@ -271,6 +274,9 @@ def habit_rules_dialog(habit: HabitDefinition | None = None) -> None:
                 )
             ),
         )
+        st.caption(
+            "No Todoist links creates a manual habit that you check off directly in ePomodoro."
+        )
         submitted = st.form_submit_button(
             "Save habit",
             type="primary",
@@ -280,9 +286,6 @@ def habit_rules_dialog(habit: HabitDefinition | None = None) -> None:
     if submitted:
         if not name.strip():
             st.error("Enter a habit name.")
-            return
-        if not labels and not selected_task_ids:
-            st.error("Choose at least one Todoist label or task.")
             return
         if not scheduled_weekdays:
             st.error("Choose at least one scheduled day.")
@@ -667,6 +670,19 @@ st.table(
 
 st.subheader("Mood and quick journal")
 today_reflection = get_daily_reflection(today)
+journal_prompts = {
+    "Free write": "What is on your mind?",
+    "Wins": "What went well today, even if it was small?",
+    "Challenges": "What felt difficult, and what did you learn from it?",
+    "Gratitude": "What are you grateful for today?",
+    "Tomorrow": "What matters most tomorrow?",
+}
+journal_prompt = st.segmented_control(
+    "Writing prompt",
+    list(journal_prompts),
+    default="Free write",
+    key="journal_prompt",
+)
 with st.form("daily_reflection"):
     mood = st.pills(
         "How was today?",
@@ -676,11 +692,12 @@ with st.form("daily_reflection"):
         format_func=lambda score: MOOD_LABELS[score],
     )
     journal = st.text_area(
-        "Quick journal",
+        "Journal entry",
         value=today_reflection.journal if today_reflection else "",
-        max_chars=1_000,
-        placeholder="A quick note about the day…",
-        height=100,
+        max_chars=10_000,
+        placeholder=journal_prompts[str(journal_prompt or "Free write")],
+        height=240,
+        help="Up to 10,000 characters. Existing entries remain available below.",
     )
     reflection_submitted = st.form_submit_button(
         "Save reflection",

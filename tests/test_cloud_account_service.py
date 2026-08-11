@@ -13,6 +13,8 @@ from services.cloud_account_service import (
     activate_cloud_profile,
     restore_local_profile,
 )
+from database.db import create_goal, get_daily_reflections, get_goals, init_db, save_daily_reflection
+from datetime import date
 
 
 def test_cloud_config_requires_public_https_credentials(monkeypatch) -> None:
@@ -73,3 +75,23 @@ def test_account_profiles_are_isolated_and_import_is_explicit(
     assert cloud_accounts.os.environ["FOCUS_CLOUD_USER_ID"] == account_id
     assert restore_local_profile() == base
     assert "FOCUS_CLOUD_USER_ID" not in cloud_accounts.os.environ
+
+
+def test_import_merges_missing_data_into_existing_profile(
+    monkeypatch, tmp_path: Path
+) -> None:
+    base = tmp_path / "focus.db"
+    init_db(base)
+    save_daily_reflection(date(2026, 8, 10), mood=4, journal="Recovered", db_path=base)
+    monkeypatch.setenv("FOCUS_DB_PATH", str(base))
+    monkeypatch.delenv("FOCUS_BASE_DB_PATH", raising=False)
+    account_id = "8bb3ed5f-f2df-44e7-a457-e180f433fa30"
+    target = cloud_accounts.profile_database_path(account_id)
+    init_db(target)
+    create_goal("Keep this goal", db_path=target)
+
+    activate_cloud_profile(account_id, import_local=True)
+
+    assert get_daily_reflections(target)[0].journal == "Recovered"
+    assert get_goals(target)[0].name == "Keep this goal"
+    restore_local_profile()

@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 from uuid import uuid4
 
 from database.db import connect
-from services.cloud_account_service import CloudAccountService
+from services.cloud_account_service import CloudAccountError, CloudAccountService
 
 
 ENTITY_TYPES = {
@@ -18,6 +18,7 @@ ENTITY_TYPES = {
     "habit",
     "habit_checkin",
     "reflection",
+    "goal",
 }
 
 
@@ -47,12 +48,30 @@ def synchronize_cloud(
     }
     shadow = _load_shadow(db_path)
     pending = _pending_records(local, shadow, device_id=device_id)
+    pushed = len(pending)
     if pending:
-        account.authorized_json(
-            "POST",
-            "/rest/v1/rpc/merge_sync_records",
-            payload={"p_records": pending},
-        )
+        try:
+            account.authorized_json(
+                "POST",
+                "/rest/v1/rpc/merge_sync_records",
+                payload={"p_records": pending},
+            )
+        except CloudAccountError as exc:
+            # Older projects may not have the goal entity migration yet. Keep
+            # all existing sync data working and retry goals on the next sync.
+            legacy_schema = "sync_records_entity_type_check" in str(exc)
+            without_goals = [
+                record for record in pending if record["entity_type"] != "goal"
+            ]
+            if not legacy_schema or len(without_goals) == len(pending):
+                raise
+            pushed = len(without_goals)
+            if without_goals:
+                account.authorized_json(
+                    "POST",
+                    "/rest/v1/rpc/merge_sync_records",
+                    payload={"p_records": without_goals},
+                )
 
     remote = _fetch_all_records(account)
     applied = apply_remote_records(remote, db_path)
@@ -66,7 +85,7 @@ def synchronize_cloud(
             (synced_at.isoformat(),),
         )
     return SyncSummary(
-        pushed=len(pending),
+        pushed=pushed,
         pulled=len(remote),
         applied=applied,
         synced_at=synced_at,
@@ -171,6 +190,13 @@ def export_sync_entities(
                             for part in str(row["scheduled_weekdays"]).split(",")
                             if part.strip()
                         ],
+                        "tracking_mode": (
+                            "todoistLabel"
+                            if labels.get(habit_id)
+                            else "taskName"
+                            if links.get(habit_id)
+                            else "manual"
+                        ),
                         "todoist_labels": labels.get(habit_id, []),
                         "task_links": links.get(habit_id, []),
                         "is_active": bool(row["is_active"]),
@@ -224,6 +250,37 @@ def export_sync_entities(
                     },
                 )
             )
+
+        goal_links: dict[str, list[dict[str, str]]] = {}
+        for row in connection.execute(
+            "SELECT * FROM goal_links ORDER BY goal_id, entity_type, entity_id"
+        ).fetchall():
+            goal_links.setdefault(str(row["goal_id"]), []).append(
+                {
+                    "entity_type": str(row["entity_type"]),
+                    "entity_id": str(row["entity_id"]),
+                    "entity_name": str(row["entity_name"]),
+                }
+            )
+        for row in connection.execute("SELECT * FROM goals ORDER BY id").fetchall():
+            goal_id = str(row["id"])
+            entities.append(
+                LocalSyncEntity(
+                    "goal",
+                    goal_id,
+                    {
+                        "name": str(row["name"]),
+                        "description": str(row["description"]),
+                        "target_date": (
+                            str(row["target_date"]) if row["target_date"] else None
+                        ),
+                        "status": str(row["status"]),
+                        "created_at": str(row["created_at"]),
+                        "updated_at": str(row["updated_at"]),
+                        "links": goal_links.get(goal_id, []),
+                    },
+                )
+            )
     return entities
 
 
@@ -247,6 +304,7 @@ def apply_remote_records(
         "focus_session": 1,
         "local_task": 1,
         "reflection": 1,
+        "goal": 2,
         "habit": 2,
     }
     upsert_priority = {
@@ -254,6 +312,7 @@ def apply_remote_records(
         "local_task": 1,
         "focus_session": 1,
         "reflection": 1,
+        "goal": 1,
         "habit_checkin": 2,
     }
     deletes = sorted(
@@ -477,6 +536,8 @@ def _delete_entity(connection, record: Mapping[str, object]) -> None:
         connection.execute(
             "DELETE FROM daily_reflections WHERE entry_date = ?", (entity_id,)
         )
+    elif entity_type == "goal":
+        connection.execute("DELETE FROM goals WHERE id = ?", (entity_id,))
 
 
 def _upsert_entity(connection, record: Mapping[str, object]) -> None:
@@ -608,6 +669,54 @@ def _upsert_entity(connection, record: Mapping[str, object]) -> None:
                 _valid_timestamp(payload.get("updated_at")) or timestamp,
             ),
         )
+    elif entity_type == "goal":
+        status = str(payload.get("status") or "active")
+        if status not in {"active", "paused", "completed"}:
+            status = "active"
+        target_date = _date_text(payload.get("target_date"))
+        connection.execute(
+            """
+            INSERT INTO goals (
+                id, name, description, target_date, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                description = excluded.description,
+                target_date = excluded.target_date,
+                status = excluded.status,
+                updated_at = excluded.updated_at
+            """,
+            (
+                entity_id,
+                _text(payload.get("name"), 300, "Goal"),
+                _text(payload.get("description"), 5_000),
+                target_date,
+                status,
+                _valid_timestamp(payload.get("created_at")) or timestamp,
+                _valid_timestamp(payload.get("updated_at")) or timestamp,
+            ),
+        )
+        connection.execute("DELETE FROM goal_links WHERE goal_id = ?", (entity_id,))
+        links = payload.get("links")
+        if isinstance(links, list):
+            connection.executemany(
+                """
+                INSERT INTO goal_links (goal_id, entity_type, entity_id, entity_name)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (
+                        entity_id,
+                        _text(link.get("entity_type"), 20),
+                        _text(link.get("entity_id"), 300),
+                        _text(link.get("entity_name"), 300, "Linked item"),
+                    )
+                    for link in links
+                    if isinstance(link, dict)
+                    and _text(link.get("entity_type"), 20) in {"task", "habit"}
+                    and _text(link.get("entity_id"), 300)
+                ],
+            )
 
 
 def _upsert_habit(connection, entity_id: str, payload: dict, timestamp: str) -> None:

@@ -19,7 +19,13 @@ from database.db import (
     set_daily_plan_item_status,
 )
 from database.models import DailyPlan, TaskPreference
-from services.productivity_service import recommend_tasks
+from services.productivity_service import (
+    energy_level_from_labels,
+    estimate_minutes_from_labels,
+    recommend_tasks,
+    task_energy_level,
+    task_estimate_minutes,
+)
 from services.settings_service import get_todoist_token
 from services.datetime_service import local_timestamp
 from services.task_catalog import local_task_for_focus, load_todoist_catalog
@@ -122,6 +128,8 @@ for index, task in enumerate(
 ):
     saved = saved_by_id.get(task.id)
     preference = preferences.get(task.id)
+    tagged_energy = energy_level_from_labels(task.labels)
+    tagged_minutes = estimate_minutes_from_labels(task.labels)
     include_default = bool(saved) or (
         plan is None and (task.source == "local" or task.is_due_on(today))
     )
@@ -134,8 +142,22 @@ for index, task in enumerate(
             "Task": task.content,
             "Project": task.project_name,
             "Priority": task.priority_label,
-            "Estimate": preference.estimated_minutes if preference else 25,
-            "Energy": preference.energy_level if preference else "medium",
+            "Estimate": task_estimate_minutes(task, preference),
+            "Estimate source": (
+                "Todoist label"
+                if tagged_minutes
+                else "App setting"
+                if preference
+                else "Default"
+            ),
+            "Energy": task_energy_level(task, preference),
+            "Energy source": (
+                "Todoist label"
+                if tagged_energy
+                else "App setting"
+                if preference
+                else "Default"
+            ),
             "Goal": ", ".join(task_goal_names.get(task.id, [])),
             "Source": task.source,
             "Status": str(saved["status"]) if saved else "planned",
@@ -152,7 +174,9 @@ plan_frame = pd.DataFrame(
         "Project",
         "Priority",
         "Estimate",
+        "Estimate source",
         "Energy",
+        "Energy source",
         "Goal",
         "Source",
         "Status",
@@ -188,7 +212,15 @@ with st.form("daily_command_center"):
         plan_frame,
         hide_index=True,
         key="today_plan_editor",
-        disabled=["Task", "Project", "Priority", "Goal", "Source"],
+        disabled=[
+            "Task",
+            "Project",
+            "Priority",
+            "Estimate source",
+            "Energy source",
+            "Goal",
+            "Source",
+        ],
         column_config={
             "Task ID": None,
             "Include": st.column_config.CheckboxColumn("Plan"),
@@ -198,9 +230,11 @@ with st.form("daily_command_center"):
             "Estimate": st.column_config.NumberColumn(
                 "Minutes", min_value=1, max_value=1_440, step=5
             ),
+            "Estimate source": st.column_config.TextColumn("Time source"),
             "Energy": st.column_config.SelectboxColumn(
                 "Energy", options=["low", "medium", "high"]
             ),
+            "Energy source": st.column_config.TextColumn("Energy source"),
             "Status": st.column_config.SelectboxColumn(
                 "Status", options=["planned", "completed", "deferred"]
             ),
@@ -210,6 +244,11 @@ with st.form("daily_command_center"):
         "Save today’s plan",
         type="primary",
         icon=":material/save:",
+    )
+    st.caption(
+        "Todoist labels energy_low, energy_medium, and energy_high (or low-energy, "
+        "medium-energy, and high-energy) override app energy. Minute labels such as "
+        "25min, 50_minutes, time_30, or 15 override the app estimate."
     )
 
 if save_clicked:

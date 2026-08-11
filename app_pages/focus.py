@@ -20,10 +20,16 @@ from database.db import (
 from database.models import FocusSessionCreate
 from services.audio_service import completion_chime
 from services.habit_service import record_task_completion
+from services.productivity_service import (
+    energy_level_from_labels,
+    estimate_minutes_from_labels,
+    task_energy_level,
+    task_estimate_minutes,
+)
 from services.datetime_service import local_timestamp
 from services.session_service import checkpoint_timer
 from services.settings_service import get_todoist_token
-from services.task_catalog import local_task_for_focus
+from services.task_catalog import generic_focus_task, local_task_for_focus
 from services.timer_service import (
     AWAITING_OUTCOME,
     TimerState,
@@ -61,7 +67,10 @@ def local_id(task: TodoistTask) -> str:
 
 
 def render_current_task(task: TodoistTask) -> None:
-    source_label = "Local focus task" if task.source == "local" else "Todoist task"
+    source_label = {
+        "local": "Local focus task",
+        "generic": "No linked task",
+    }.get(task.source, "Todoist task")
     with st.container(border=True):
         st.caption(f"Current task · {source_label}")
         st.subheader(task.content)
@@ -231,10 +240,12 @@ if active_timer is not None:
                     icon=":material/save:",
                 )
             else:
-                st.success(
-                    "Focus session logged locally. The local task remains active.",
-                    icon=":material/save:",
+                message = (
+                    "Generic focus session logged."
+                    if source == "generic"
+                    else "Focus session logged locally. The local task remains active."
                 )
+                st.success(message, icon=":material/save:")
 
             with st.container(horizontal=True):
                 if (
@@ -292,6 +303,9 @@ if active_timer is not None:
     st.stop()
 
 with st.container(horizontal=True, horizontal_alignment="right"):
+    if st.button("Generic focus", icon=":material/timer:"):
+        st.session_state.selected_task_id = "generic:focus"
+        st.rerun()
     if st.button("Add local task", icon=":material/add_task:"):
         add_local_task_dialog()
     render_break_launcher()
@@ -358,6 +372,7 @@ st.caption(
 )
 
 visible_ids = {task.id for task in visible_tasks}
+visible_ids.add("generic:focus")
 if st.session_state.selected_task_id not in visible_ids:
     st.session_state.selected_task_id = None
 
@@ -374,7 +389,7 @@ if new_selection is not None:
 task = next(
     (
         task
-        for task in visible_tasks
+        for task in [generic_focus_task(), *visible_tasks]
         if task.id == st.session_state.selected_task_id
     ),
     None,
@@ -386,16 +401,20 @@ if task is None:
 render_current_task(task)
 
 task_preference = get_task_preferences().get(task.id)
+tagged_energy = energy_level_from_labels(task.labels)
+tagged_minutes = estimate_minutes_from_labels(task.labels)
 _, today_plan_items = get_daily_plan(date.today())
 today_plan_item = next(
     (item for item in today_plan_items if str(item["task_id"]) == task.id),
     None,
 )
-if task_preference:
+if task_preference or tagged_energy or tagged_minutes:
     plan_note = (
-        f"{task_preference.estimated_minutes} min estimate · "
-        f"{task_preference.energy_level.title()} energy"
+        f"{task_estimate_minutes(task, task_preference)} min estimate · "
+        f"{task_energy_level(task, task_preference).title()} energy"
     )
+    if tagged_energy or tagged_minutes:
+        plan_note += " · Todoist labels applied"
     if today_plan_item and bool(today_plan_item["is_top_three"]):
         plan_note += " · Today’s top 3"
     st.caption(plan_note)
@@ -410,7 +429,7 @@ if task.source == "local" and st.button(
     st.rerun()
 
 suggested_minutes = min(
-    240, task_preference.estimated_minutes if task_preference else 25
+    240, task_estimate_minutes(task, task_preference)
 )
 duration_choice = st.segmented_control(
     "Focus duration",

@@ -74,7 +74,7 @@ elif cloud_config is None:
     )
 elif cloud_session is None:
     st.write(
-        "Sign in to keep tasks, focus history, habits, check-ins, and reflections "
+        "Sign in to keep tasks, focus history, habits, check-ins, goals, and journal entries "
         "in sync across your computers and Android devices."
     )
     sign_in_tab, create_tab = st.tabs(["Sign in", "Create account"])
@@ -86,9 +86,10 @@ elif cloud_session is None:
             )
             import_on_sign_in = st.checkbox(
                 "Copy this device's current local data into my account",
+                value=True,
                 help=(
-                    "Use this once if this computer already contains the data you want. "
-                    "Existing account data on this device is left unchanged."
+                    "Recommended when this computer already contains data. The account "
+                    "profile is merged with cloud data after the copy."
                 ),
             )
             sign_in_clicked = st.form_submit_button(
@@ -102,6 +103,7 @@ elif cloud_session is None:
                     session.user_id, import_local=import_on_sign_in
                 )
                 init_db(profile_path)
+                synchronize_cloud(account, profile_path)
                 reset_profile_state()
                 st.rerun()
             except (ValueError, CloudAccountError, OSError, sqlite3.Error) as exc:
@@ -124,8 +126,11 @@ elif cloud_session is None:
                         "Account created. Check your email to confirm it, then sign in."
                     )
                 else:
-                    profile_path = activate_cloud_profile(session.user_id)
+                    profile_path = activate_cloud_profile(
+                        session.user_id, import_local=True
+                    )
                     init_db(profile_path)
+                    synchronize_cloud(account, profile_path)
                     reset_profile_state()
                     st.rerun()
             except (ValueError, CloudAccountError, OSError, sqlite3.Error) as exc:
@@ -138,7 +143,7 @@ else:
     sync_col, sign_out_col = st.columns(2)
     with sync_col:
         if st.button(
-            "Sync now", type="primary", icon=":material/sync:", use_container_width=True
+            "Sync now", type="primary", icon=":material/sync:", width="stretch"
         ):
             try:
                 with st.spinner("Syncing your data…"):
@@ -152,9 +157,7 @@ else:
             except (CloudAccountError, OSError, ValueError, sqlite3.Error) as exc:
                 st.error(str(exc), icon=":material/error:")
     with sign_out_col:
-        if st.button(
-            "Sign out", icon=":material/logout:", use_container_width=True
-        ):
+        if st.button("Sign out", icon=":material/logout:", width="stretch"):
             try:
                 remove_cloud_session()
                 restore_local_profile()
@@ -163,7 +166,8 @@ else:
             except CloudAccountError as exc:
                 st.error(str(exc), icon=":material/error:")
     st.caption(
-        "Sync is manual in this first release. Todoist tokens remain only on each device."
+        "Sync runs automatically after sign-in and can also be started here. For security, "
+        "Todoist tokens do not cloud-sync; paste the same token once on each device."
     )
 
 token = get_todoist_token()

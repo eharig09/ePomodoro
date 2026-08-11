@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta
+import re
 from statistics import median
 from typing import Iterable, Mapping
 
@@ -11,6 +12,54 @@ from services.todoist_service import TodoistTask
 
 
 ENERGY_LEVELS = ("low", "medium", "high")
+
+
+def energy_level_from_labels(labels: Iterable[str]) -> str | None:
+    """Return an energy level from Todoist labels such as energy_high."""
+    normalized = {
+        re.sub(r"[^a-z0-9]+", "_", str(label).casefold()).strip("_")
+        for label in labels
+    }
+    for level in reversed(ENERGY_LEVELS):
+        if {f"energy_{level}", f"{level}_energy"}.intersection(normalized):
+            return level
+    return None
+
+
+def task_energy_level(
+    task: TodoistTask, preference: TaskPreference | None = None
+) -> str:
+    return energy_level_from_labels(task.labels) or (
+        preference.energy_level if preference else "medium"
+    )
+
+
+def estimate_minutes_from_labels(labels: Iterable[str]) -> int | None:
+    """Return a duration from labels such as 25min, 50_minutes, or time_30."""
+    patterns = (
+        r"^(\d{1,4})$",
+        r"^(\d{1,4})_?(?:m|min|mins|minute|minutes)$",
+        r"^(?:time|minutes|mins|min)_(\d{1,4})$",
+    )
+    for label in labels:
+        normalized = re.sub(
+            r"[^a-z0-9]+", "_", str(label).casefold()
+        ).strip("_")
+        for pattern in patterns:
+            match = re.fullmatch(pattern, normalized)
+            if match:
+                minutes = int(match.group(1))
+                if 1 <= minutes <= 1_440:
+                    return minutes
+    return None
+
+
+def task_estimate_minutes(
+    task: TodoistTask, preference: TaskPreference | None = None
+) -> int:
+    return estimate_minutes_from_labels(task.labels) or (
+        preference.estimated_minutes if preference else 25
+    )
 
 
 def recommend_tasks(
@@ -35,8 +84,8 @@ def recommend_tasks(
 
     for task in tasks:
         preference = preferences.get(task.id)
-        task_energy = preference.energy_level if preference else "medium"
-        estimate = preference.estimated_minutes if preference else 25
+        task_energy = task_energy_level(task, preference)
+        estimate = task_estimate_minutes(task, preference)
         score = task.priority * 10
         reasons: list[str] = [task.priority_label]
 
