@@ -4,6 +4,23 @@ from database.models import LocalFocusTask
 from services.todoist_service import TodoistProject, TodoistService, TodoistTask
 
 
+def generic_focus_task() -> TodoistTask:
+    return TodoistTask(
+        id="generic:focus",
+        content="Generic focus",
+        description="A focus block that is not connected to a task.",
+        project_id=None,
+        project_name="Focus",
+        section_id=None,
+        priority=1,
+        labels=(),
+        due_date=None,
+        due_datetime=None,
+        url=None,
+        source="generic",
+    )
+
+
 def local_task_for_focus(task: LocalFocusTask) -> TodoistTask:
     return TodoistTask(
         id=f"local:{task.id}",

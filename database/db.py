@@ -5,13 +5,15 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, Mapping
 from uuid import uuid4
 
 from database.migrations import apply_migrations
 from database.models import (
+    CalendarSource,
     DailyReflection,
     DailyPlan,
+    DailyRitual,
     FocusSessionCreate,
     Goal,
     Habit,
@@ -20,6 +22,7 @@ from database.models import (
     LocalFocusTask,
     SESSION_STATUSES,
     TaskPreference,
+    WeeklyPlan,
     WeeklyReview,
 )
 from services.datetime_service import local_timestamp
@@ -517,8 +520,6 @@ def save_habit_definition(
     if len(clean_group) > 120:
         raise ValueError("Habit group must be 120 characters or fewer")
     scheduled_weekdays = _serialize_scheduled_weekdays(habit.scheduled_weekdays)
-    if not links and not clean_labels:
-        raise ValueError("Link at least one Todoist task or label")
     if any(link.habit_id != habit.id for link in links):
         raise ValueError("Habit task links must belong to the saved habit")
     if any(not 1 <= link.priority <= 4 for link in links):
@@ -824,8 +825,8 @@ def save_daily_reflection(
     clean_journal = journal.strip()
     if mood not in range(1, 6):
         raise ValueError("Mood must be between 1 and 5")
-    if len(clean_journal) > 1_000:
-        raise ValueError("Journal entry must be 1,000 characters or fewer")
+    if len(clean_journal) > 10_000:
+        raise ValueError("Journal entry must be 10,000 characters or fewer")
     updated_at = datetime.now(timezone.utc)
     with connect(db_path) as connection, connection:
         connection.execute(
@@ -1199,6 +1200,422 @@ def set_daily_plan_item_status(
             (status, plan_date.isoformat(), task_id),
         )
         return cursor.rowcount == 1
+
+
+def save_calendar_source(
+    source: CalendarSource,
+    ics_data: str,
+    db_path: str | Path | None = None,
+) -> None:
+    source_id = source.id.strip()
+    name = source.name.strip()
+    provider = source.provider.strip().lower()
+    if not source_id or len(source_id) > 100:
+        raise ValueError("Calendar source ID is invalid")
+    if not name or len(name) > 120:
+        raise ValueError("Calendar name must be between 1 and 120 characters")
+    if provider not in {"google", "outlook", "ics"}:
+        raise ValueError("Unsupported calendar provider")
+    if source.event_count < 0:
+        raise ValueError("Calendar event count cannot be negative")
+    if not ics_data.strip() or len(ics_data.encode("utf-8")) > 5_000_000:
+        raise ValueError("Calendar data must be a valid file under 5 MB")
+    if "BEGIN:VCALENDAR" not in ics_data[:1_000].upper():
+        raise ValueError("Calendar data is not an iCalendar file")
+    with connect(db_path) as connection, connection:
+        connection.execute(
+            """
+            INSERT INTO calendar_sources (
+                id, name, provider, ics_data, event_count,
+                last_refreshed_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                provider = excluded.provider,
+                ics_data = excluded.ics_data,
+                event_count = excluded.event_count,
+                last_refreshed_at = excluded.last_refreshed_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                source_id,
+                name,
+                provider,
+                ics_data,
+                source.event_count,
+                source.last_refreshed_at.isoformat(),
+                source.created_at.isoformat(),
+                source.updated_at.isoformat(),
+            ),
+        )
+
+
+def get_calendar_sources(
+    db_path: str | Path | None = None,
+) -> list[CalendarSource]:
+    with connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, name, provider, event_count, last_refreshed_at,
+                   created_at, updated_at
+            FROM calendar_sources
+            ORDER BY name COLLATE NOCASE, id
+            """
+        ).fetchall()
+    return [
+        CalendarSource(
+            id=str(row["id"]),
+            name=str(row["name"]),
+            provider=str(row["provider"]),
+            event_count=int(row["event_count"]),
+            last_refreshed_at=datetime.fromisoformat(
+                str(row["last_refreshed_at"])
+            ),
+            created_at=datetime.fromisoformat(str(row["created_at"])),
+            updated_at=datetime.fromisoformat(str(row["updated_at"])),
+        )
+        for row in rows
+    ]
+
+
+def get_calendar_source_data(
+    source_id: str,
+    db_path: str | Path | None = None,
+) -> str | None:
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT ics_data FROM calendar_sources WHERE id = ?",
+            (source_id.strip(),),
+        ).fetchone()
+    return str(row["ics_data"]) if row else None
+
+
+def delete_calendar_source(
+    source_id: str,
+    db_path: str | Path | None = None,
+) -> bool:
+    with connect(db_path) as connection, connection:
+        cursor = connection.execute(
+            "DELETE FROM calendar_sources WHERE id = ?",
+            (source_id.strip(),),
+        )
+        return cursor.rowcount == 1
+
+
+def get_daily_ritual(
+    ritual_date: date,
+    db_path: str | Path | None = None,
+) -> DailyRitual | None:
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT * FROM daily_rituals WHERE ritual_date = ?",
+            (ritual_date.isoformat(),),
+        ).fetchone()
+    if row is None:
+        return None
+    return DailyRitual(
+        ritual_date=date.fromisoformat(str(row["ritual_date"])),
+        startup_completed_at=(
+            datetime.fromisoformat(str(row["startup_completed_at"]))
+            if row["startup_completed_at"]
+            else None
+        ),
+        shutdown_completed_at=(
+            datetime.fromisoformat(str(row["shutdown_completed_at"]))
+            if row["shutdown_completed_at"]
+            else None
+        ),
+        wins=str(row["wins"]),
+        blockers=str(row["blockers"]),
+        tomorrow_first_task_id=(
+            str(row["tomorrow_first_task_id"])
+            if row["tomorrow_first_task_id"]
+            else None
+        ),
+        tomorrow_first_task_name=str(row["tomorrow_first_task_name"]),
+        updated_at=datetime.fromisoformat(str(row["updated_at"])),
+    )
+
+
+def mark_daily_startup_complete(
+    ritual_date: date,
+    *,
+    completed_at: datetime | None = None,
+    db_path: str | Path | None = None,
+) -> DailyRitual:
+    timestamp = completed_at or datetime.now(timezone.utc)
+    if timestamp.tzinfo is None:
+        raise ValueError("Startup completion time must include a timezone")
+    value = timestamp.astimezone(timezone.utc).isoformat()
+    with connect(db_path) as connection, connection:
+        connection.execute(
+            """
+            INSERT INTO daily_rituals (
+                ritual_date, startup_completed_at, updated_at
+            ) VALUES (?, ?, ?)
+            ON CONFLICT(ritual_date) DO UPDATE SET
+                startup_completed_at = COALESCE(
+                    daily_rituals.startup_completed_at,
+                    excluded.startup_completed_at
+                ),
+                updated_at = excluded.updated_at
+            """,
+            (ritual_date.isoformat(), value, value),
+        )
+    ritual = get_daily_ritual(ritual_date, db_path)
+    if ritual is None:  # pragma: no cover - guarded by the upsert above
+        raise RuntimeError("Daily startup could not be saved")
+    return ritual
+
+
+def save_daily_shutdown(
+    ritual_date: date,
+    *,
+    resolutions: Mapping[str, str],
+    wins: str = "",
+    blockers: str = "",
+    tomorrow_first_task_id: str | None = None,
+    completed_at: datetime | None = None,
+    db_path: str | Path | None = None,
+) -> DailyRitual:
+    allowed_resolutions = {"completed", "continue", "deferred"}
+    if any(value not in allowed_resolutions for value in resolutions.values()):
+        raise ValueError("Unsupported shutdown resolution")
+    clean_wins = wins.strip()
+    clean_blockers = blockers.strip()
+    if len(clean_wins) > 5_000 or len(clean_blockers) > 5_000:
+        raise ValueError("Daily shutdown fields must be 5,000 characters or fewer")
+    timestamp = completed_at or datetime.now(timezone.utc)
+    if timestamp.tzinfo is None:
+        raise ValueError("Shutdown completion time must include a timezone")
+    timestamp_text = timestamp.astimezone(timezone.utc).isoformat()
+    date_text = ritual_date.isoformat()
+    tomorrow = ritual_date + timedelta(days=1)
+
+    with connect(db_path) as connection, connection:
+        existing_ritual = connection.execute(
+            "SELECT * FROM daily_rituals WHERE ritual_date = ?",
+            (date_text,),
+        ).fetchone()
+        current_items = {
+            str(row["task_id"]): dict(row)
+            for row in connection.execute(
+                "SELECT * FROM daily_plan_items WHERE plan_date = ?",
+                (date_text,),
+            ).fetchall()
+        }
+        unfinished_ids = {
+            task_id
+            for task_id, item in current_items.items()
+            if str(item["status"]) == "planned"
+        }
+        if set(resolutions) != unfinished_ids:
+            raise ValueError("Resolve every unfinished planned task before shutdown")
+
+        carry_ids = [
+            task_id
+            for task_id, resolution in resolutions.items()
+            if resolution == "continue"
+        ]
+        preserve_first_task = bool(
+            not unfinished_ids
+            and existing_ritual
+            and existing_ritual["shutdown_completed_at"]
+            and tomorrow_first_task_id is None
+        )
+        if preserve_first_task:
+            tomorrow_first_task_id = (
+                str(existing_ritual["tomorrow_first_task_id"])
+                if existing_ritual["tomorrow_first_task_id"]
+                else None
+            )
+        if (
+            tomorrow_first_task_id
+            and tomorrow_first_task_id not in carry_ids
+            and not preserve_first_task
+        ):
+            raise ValueError("Tomorrow's first task must be continued")
+
+        for task_id, resolution in resolutions.items():
+            status = "completed" if resolution == "completed" else "deferred"
+            connection.execute(
+                """
+                UPDATE daily_plan_items SET status = ?
+                WHERE plan_date = ? AND task_id = ?
+                """,
+                (status, date_text, task_id),
+            )
+
+        first_task_name = (
+            str(existing_ritual["tomorrow_first_task_name"])
+            if preserve_first_task
+            else ""
+        )
+        if carry_ids:
+            current_plan = connection.execute(
+                "SELECT * FROM daily_plans WHERE plan_date = ?",
+                (date_text,),
+            ).fetchone()
+            connection.execute(
+                """
+                INSERT INTO daily_plans (
+                    plan_date, energy_level, available_minutes,
+                    shutdown_time, intention, updated_at
+                ) VALUES (?, ?, ?, ?, '', ?)
+                ON CONFLICT(plan_date) DO NOTHING
+                """,
+                (
+                    tomorrow.isoformat(),
+                    str(current_plan["energy_level"]) if current_plan else "medium",
+                    int(current_plan["available_minutes"]) if current_plan else 240,
+                    str(current_plan["shutdown_time"]) if current_plan else "17:00",
+                    timestamp_text,
+                ),
+            )
+            if tomorrow_first_task_id:
+                connection.execute(
+                    """
+                    UPDATE daily_plan_items SET position = position + 1
+                    WHERE plan_date = ?
+                    """,
+                    (tomorrow.isoformat(),),
+                )
+            max_position_row = connection.execute(
+                """
+                SELECT COALESCE(MAX(position), -1) AS max_position
+                FROM daily_plan_items WHERE plan_date = ?
+                """,
+                (tomorrow.isoformat(),),
+            ).fetchone()
+            next_position = int(max_position_row["max_position"]) + 1
+            ordered_carry = sorted(
+                carry_ids,
+                key=lambda task_id: (
+                    task_id != tomorrow_first_task_id,
+                    int(current_items[task_id]["position"]),
+                ),
+            )
+            for offset, task_id in enumerate(ordered_carry):
+                item = current_items[task_id]
+                position = 0 if task_id == tomorrow_first_task_id else next_position + offset
+                connection.execute(
+                    """
+                    INSERT INTO daily_plan_items (
+                        plan_date, task_id, task_name, project_name, source,
+                        position, is_top_three, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, 0, 'planned')
+                    ON CONFLICT(plan_date, task_id) DO UPDATE SET
+                        task_name = excluded.task_name,
+                        project_name = excluded.project_name,
+                        source = excluded.source,
+                        position = excluded.position,
+                        status = 'planned'
+                    WHERE daily_plan_items.status != 'completed'
+                    """,
+                    (
+                        tomorrow.isoformat(),
+                        task_id,
+                        str(item["task_name"]),
+                        str(item["project_name"]),
+                        str(item["source"]),
+                        position,
+                    ),
+                )
+            if tomorrow_first_task_id:
+                first_task_name = str(
+                    current_items[tomorrow_first_task_id]["task_name"]
+                )
+
+        startup_completed_at = (
+            str(existing_ritual["startup_completed_at"])
+            if existing_ritual and existing_ritual["startup_completed_at"]
+            else None
+        )
+        connection.execute(
+            """
+            INSERT INTO daily_rituals (
+                ritual_date, startup_completed_at, shutdown_completed_at,
+                wins, blockers, tomorrow_first_task_id,
+                tomorrow_first_task_name, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ritual_date) DO UPDATE SET
+                shutdown_completed_at = excluded.shutdown_completed_at,
+                wins = excluded.wins,
+                blockers = excluded.blockers,
+                tomorrow_first_task_id = excluded.tomorrow_first_task_id,
+                tomorrow_first_task_name = excluded.tomorrow_first_task_name,
+                updated_at = excluded.updated_at
+            """,
+            (
+                date_text,
+                startup_completed_at,
+                timestamp_text,
+                clean_wins,
+                clean_blockers,
+                tomorrow_first_task_id,
+                first_task_name,
+                timestamp_text,
+            ),
+        )
+
+    ritual = get_daily_ritual(ritual_date, db_path)
+    if ritual is None:  # pragma: no cover - guarded by the upsert above
+        raise RuntimeError("Daily shutdown could not be saved")
+    return ritual
+
+
+def save_weekly_plan(
+    plan: WeeklyPlan,
+    db_path: str | Path | None = None,
+) -> None:
+    if plan.week_start.weekday() != 0:
+        raise ValueError("Weekly plans must start on Monday")
+    objective_lines = [
+        line.strip() for line in plan.objectives.splitlines() if line.strip()
+    ]
+    if not 1 <= len(objective_lines) <= 5:
+        raise ValueError("Choose between one and five weekly objectives")
+    objectives = "\n".join(objective_lines)
+    intention = plan.intention.strip()
+    if len(objectives) > 5_000 or len(intention) > 500:
+        raise ValueError("Weekly plan text is too long")
+    with connect(db_path) as connection, connection:
+        connection.execute(
+            """
+            INSERT INTO weekly_plans (
+                week_start, objectives, intention, updated_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(week_start) DO UPDATE SET
+                objectives = excluded.objectives,
+                intention = excluded.intention,
+                updated_at = excluded.updated_at
+            """,
+            (
+                plan.week_start.isoformat(),
+                objectives,
+                intention,
+                plan.updated_at.isoformat(),
+            ),
+        )
+
+
+def get_weekly_plan(
+    week_start: date,
+    db_path: str | Path | None = None,
+) -> WeeklyPlan | None:
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT * FROM weekly_plans WHERE week_start = ?",
+            (week_start.isoformat(),),
+        ).fetchone()
+    if row is None:
+        return None
+    return WeeklyPlan(
+        week_start=date.fromisoformat(str(row["week_start"])),
+        objectives=str(row["objectives"]),
+        intention=str(row["intention"]),
+        updated_at=datetime.fromisoformat(str(row["updated_at"])),
+    )
 
 
 def save_weekly_review(

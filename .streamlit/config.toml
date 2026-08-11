@@ -1,47 +1,48 @@
 [theme]
 base = "dark"
 font = "sans-serif"
-baseRadius = "medium"
-buttonRadius = "medium"
+baseRadius = "large"
+buttonRadius = "full"
 showWidgetBorder = true
 showSidebarBorder = true
-chartCategoricalColors = ["#88C0D0", "#81A1C1", "#5E81AC", "#A3BE8C", "#EBCB8B", "#D08770", "#B48EAD"]
+chartCategoricalColors = ["#E3263E", "#FF6675", "#F59E0B", "#46B978", "#60A5FA", "#C084FC", "#A3A3A3"]
 
 [theme.light]
-primaryColor = "#9B3A28"
-backgroundColor = "#FAF9F6"
-secondaryBackgroundColor = "#F1EEE8"
-textColor = "#25231F"
-borderColor = "#D7D1C7"
-linkColor = "#8A3324"
-blueColor = "#426B8A"
-greenColor = "#3F7652"
-orangeColor = "#9B5E2D"
-redColor = "#A13C35"
+primaryColor = "#B5162B"
+backgroundColor = "#FFF9F9"
+secondaryBackgroundColor = "#F6ECEE"
+textColor = "#261719"
+borderColor = "#E4CCD0"
+linkColor = "#A91025"
+blueColor = "#356E9A"
+greenColor = "#2F7D4F"
+orangeColor = "#A45B16"
+redColor = "#B5162B"
+violetColor = "#7A4EA3"
 
 [theme.dark]
-primaryColor = "#88C0D0"
-backgroundColor = "#2E3440"
-secondaryBackgroundColor = "#3B4252"
-textColor = "#ECEFF4"
-borderColor = "#4C566A"
-linkColor = "#8FBCBB"
-blueColor = "#81A1C1"
-greenColor = "#A3BE8C"
-yellowColor = "#EBCB8B"
-orangeColor = "#D08770"
-redColor = "#BF616A"
-violetColor = "#B48EAD"
+primaryColor = "#D91F36"
+backgroundColor = "#09090B"
+secondaryBackgroundColor = "#171719"
+textColor = "#F7F4F4"
+borderColor = "#392327"
+linkColor = "#FF6675"
+blueColor = "#60A5FA"
+greenColor = "#46B978"
+yellowColor = "#F6C453"
+orangeColor = "#F59E0B"
+redColor = "#FF5A6A"
+violetColor = "#C084FC"
 
 [theme.light.sidebar]
-backgroundColor = "#F1EEE8"
-secondaryBackgroundColor = "#E7E2D9"
-borderColor = "#D7D1C7"
+backgroundColor = "#F6ECEE"
+secondaryBackgroundColor = "#EEDFE2"
+borderColor = "#E4CCD0"
 
 [theme.dark.sidebar]
-backgroundColor = "#3B4252"
-secondaryBackgroundColor = "#434C5E"
-borderColor = "#4C566A"
+backgroundColor = "#111113"
+secondaryBackgroundColor = "#1D1719"
+borderColor = "#392327"
 
 [client]
 showErrorDetails = "none"

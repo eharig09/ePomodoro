@@ -9,11 +9,15 @@ from database.db import (
     create_goal,
     create_habit_definition,
     create_local_focus_task,
+    delete_calendar_source,
     delete_focus_session,
     get_active_local_focus_tasks,
     get_app_setting,
+    get_calendar_source_data,
+    get_calendar_sources,
     get_daily_reflection,
     get_daily_reflections,
+    get_daily_ritual,
     get_focus_sessions,
     get_daily_plan,
     get_goal_links,
@@ -28,16 +32,21 @@ from database.db import (
     get_sync_runs,
     get_task_preferences,
     get_weekly_review,
+    get_weekly_plan,
     init_db,
+    mark_daily_startup_complete,
     record_habit_checkin,
     record_habit_daily_checkin,
     save_focus_session,
+    save_calendar_source,
     save_daily_plan,
     save_daily_reflection,
+    save_daily_shutdown,
     save_habit_group_icons,
     save_goal_links,
     save_task_preferences,
     save_weekly_review,
+    save_weekly_plan,
     record_sync_run,
     set_daily_plan_item_status,
     set_app_setting,
@@ -47,11 +56,14 @@ from database.db import (
     update_focus_session,
 )
 from database.models import (
+    CalendarSource,
     DailyPlan,
+    DailyRitual,
     FocusSessionCreate,
     Habit,
     HabitTaskLink,
     TaskPreference,
+    WeeklyPlan,
     WeeklyReview,
 )
 
@@ -99,6 +111,37 @@ def test_app_settings_are_persistent(tmp_path) -> None:
 
     set_app_setting("onboarding_complete", "0", db_path)
     assert get_app_setting("onboarding_complete", db_path=db_path) == "0"
+
+
+def test_calendar_source_cache_is_local_and_editable(tmp_path) -> None:
+    db_path = tmp_path / "focus.db"
+    init_db(db_path)
+    timestamp = datetime(2026, 8, 11, 14, tzinfo=timezone.utc)
+    source = CalendarSource(
+        id="work-calendar",
+        name="Work",
+        provider="google",
+        event_count=2,
+        last_refreshed_at=timestamp,
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+    ics_data = "BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR\n"
+
+    save_calendar_source(source, ics_data, db_path)
+    assert get_calendar_sources(db_path) == [source]
+    assert get_calendar_source_data(source.id, db_path) == ics_data
+
+    updated = replace(
+        source,
+        name="Primary work calendar",
+        event_count=3,
+        updated_at=timestamp + timedelta(minutes=5),
+    )
+    save_calendar_source(updated, ics_data, db_path)
+    assert get_calendar_sources(db_path)[0] == updated
+    assert delete_calendar_source(source.id, db_path) is True
+    assert get_calendar_sources(db_path) == []
 
 def test_invalid_status_is_rejected(tmp_path) -> None:
     db_path = tmp_path / "focus.db"
@@ -320,6 +363,28 @@ def test_generic_habit_supports_multiple_tasks_labels_and_daily_dedupe(
     assert get_habit_definitions(db_path) == []
 
 
+def test_manual_habit_supports_no_todoist_links_or_labels(tmp_path) -> None:
+    db_path = tmp_path / "focus.db"
+    init_db(db_path)
+
+    habit = create_habit_definition(
+        "Stretch",
+        group_name="Health",
+        scheduled_weekdays=(0, 2, 4),
+        db_path=db_path,
+    )
+
+    assert get_habit_definitions(db_path) == [habit]
+    assert get_habit_task_links(db_path, habit_id=habit.id) == []
+    assert get_habit_label_links(db_path, habit_id=habit.id) == {}
+    assert record_habit_daily_checkin(
+        habit.id,
+        datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc),
+        source="habits",
+        db_path=db_path,
+    )
+
+
 def test_group_icons_and_daily_reflection_are_persistent(tmp_path) -> None:
     db_path = tmp_path / "focus.db"
     init_db(db_path)
@@ -348,6 +413,21 @@ def test_group_icons_and_daily_reflection_are_persistent(tmp_path) -> None:
     )
     assert get_daily_reflection(entry_date, db_path) == updated
     assert len(get_daily_reflections(db_path)) == 1
+
+
+def test_daily_reflection_supports_long_journal_entries(tmp_path) -> None:
+    db_path = tmp_path / "focus.db"
+    init_db(db_path)
+    journal = "A" * 10_000
+
+    saved = save_daily_reflection(
+        datetime(2026, 8, 10).date(),
+        mood=4,
+        journal=journal,
+        db_path=db_path,
+    )
+
+    assert saved.journal == journal
 
 
 def test_plans_goals_preferences_reviews_and_sync_runs_are_persistent(tmp_path) -> None:
@@ -425,3 +505,88 @@ def test_plans_goals_preferences_reviews_and_sync_runs_are_persistent(tmp_path) 
         db_path=db_path,
     )
     assert get_sync_runs(db_path)[0]["matched_count"] == 3
+
+
+def test_daily_ritual_carries_selected_work_and_weekly_plan_is_durable(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "focus.db"
+    init_db(db_path)
+    timestamp = datetime(2026, 8, 10, 20, tzinfo=timezone.utc)
+    plan_date = timestamp.date()
+    save_daily_plan(
+        DailyPlan(plan_date, "medium", 120, "17:00", "Finish well", timestamp),
+        [
+            {
+                "task_id": "carry",
+                "task_name": "Continue the draft",
+                "project_name": "Work",
+                "source": "todoist",
+                "position": 0,
+                "is_top_three": True,
+            },
+            {
+                "task_id": "done",
+                "task_name": "Send the note",
+                "project_name": "Work",
+                "source": "todoist",
+                "position": 1,
+                "is_top_three": False,
+            },
+        ],
+        db_path,
+    )
+
+    startup = mark_daily_startup_complete(
+        plan_date, completed_at=timestamp, db_path=db_path
+    )
+    assert isinstance(startup, DailyRitual)
+    assert startup.startup_completed_at == timestamp
+
+    shutdown = save_daily_shutdown(
+        plan_date,
+        resolutions={"carry": "continue", "done": "completed"},
+        wins="Moved the draft forward",
+        blockers="Late meeting",
+        tomorrow_first_task_id="carry",
+        completed_at=timestamp + timedelta(hours=1),
+        db_path=db_path,
+    )
+
+    assert shutdown.shutdown_completed_at == timestamp + timedelta(hours=1)
+    assert shutdown.tomorrow_first_task_name == "Continue the draft"
+    assert get_daily_ritual(plan_date, db_path) == shutdown
+    today_items = {
+        row["task_id"]: row for row in get_daily_plan(plan_date, db_path)[1]
+    }
+    assert today_items["carry"]["status"] == "deferred"
+    assert today_items["done"]["status"] == "completed"
+    tomorrow_plan, tomorrow_items = get_daily_plan(
+        plan_date + timedelta(days=1), db_path
+    )
+    assert tomorrow_plan is not None
+    assert [row["task_id"] for row in tomorrow_items] == ["carry"]
+    assert tomorrow_items[0]["status"] == "planned"
+
+    edited_shutdown = save_daily_shutdown(
+        plan_date,
+        resolutions={},
+        wins="Moved the draft forward and sent the note",
+        blockers="",
+        completed_at=timestamp + timedelta(hours=2),
+        db_path=db_path,
+    )
+    assert edited_shutdown.tomorrow_first_task_id == "carry"
+    assert edited_shutdown.tomorrow_first_task_name == "Continue the draft"
+    assert [row["task_id"] for row in get_daily_plan(
+        plan_date + timedelta(days=1), db_path
+    )[1]] == ["carry"]
+
+    weekly = WeeklyPlan(
+        plan_date,
+        "Complete module three\nExercise three times",
+        "Protect two mornings",
+        timestamp,
+    )
+    save_weekly_plan(weekly, db_path)
+    assert get_weekly_plan(plan_date, db_path) == weekly

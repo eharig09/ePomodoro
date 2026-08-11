@@ -11,9 +11,11 @@ from database.db import (
     get_habit_daily_checkins,
     get_habit_definitions,
     get_weekly_review,
+    get_weekly_plan,
+    save_weekly_plan,
     save_weekly_review,
 )
-from database.models import WeeklyReview
+from database.models import WeeklyPlan, WeeklyReview
 from services.datetime_service import local_timestamp
 from services.productivity_service import calculate_weekly_metrics
 
@@ -161,3 +163,84 @@ if save_clicked:
 
 if saved_review:
     st.caption(f"Last saved {local_timestamp(saved_review.updated_at).strftime('%b %d at %I:%M %p').replace(' 0', ' ')}")
+
+st.divider()
+next_week_start = week_start + timedelta(days=7)
+next_week_end = next_week_start + timedelta(days=6)
+saved_week_plan = get_weekly_plan(next_week_start)
+current_week_plan = get_weekly_plan(week_start)
+current_objectives = (
+    [
+        line.strip()
+        for line in current_week_plan.objectives.splitlines()
+        if line.strip()
+    ]
+    if current_week_plan
+    else []
+)
+
+st.subheader("Plan the next week")
+st.caption(
+    f"Monday {next_week_start.strftime('%b %d')} â€“ "
+    f"Sunday {next_week_end.strftime('%b %d, %Y')}. "
+    "Choose outcomes, not a task for every day."
+)
+with st.form(f"weekly_plan_{next_week_start.isoformat()}"):
+    carry_objectives = (
+        st.multiselect(
+            "Carry objectives from this week",
+            current_objectives,
+            placeholder="Choose only what still matters",
+        )
+        if current_objectives
+        else []
+    )
+    objectives = st.text_area(
+        "Objectives",
+        value=saved_week_plan.objectives if saved_week_plan else "",
+        max_chars=5_000,
+        height=150,
+        placeholder="One objective per line, up to five",
+        help="An objective can span several days and contain multiple tasks.",
+    )
+    intention = st.text_input(
+        "Weekly intention",
+        value=saved_week_plan.intention if saved_week_plan else "",
+        max_chars=500,
+        placeholder="How do you want to approach the week?",
+    )
+    save_plan_clicked = st.form_submit_button(
+        "Save weekly plan",
+        type="primary",
+        icon=":material/event_note:",
+    )
+if save_plan_clicked:
+    objective_lines: list[str] = []
+    for value in [*carry_objectives, *objectives.splitlines()]:
+        cleaned = value.strip()
+        if cleaned and cleaned.casefold() not in {
+            existing.casefold() for existing in objective_lines
+        }:
+            objective_lines.append(cleaned)
+    if not 1 <= len(objective_lines) <= 5:
+        st.error("Choose between one and five weekly objectives.")
+    else:
+        save_weekly_plan(
+            WeeklyPlan(
+                week_start=next_week_start,
+                objectives="\n".join(objective_lines),
+                intention=intention,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        st.toast("Weekly plan saved.", icon=":material/check:")
+        st.rerun()
+
+if saved_week_plan:
+    with st.container(border=True):
+        st.caption("Saved objectives")
+        for objective in saved_week_plan.objectives.splitlines():
+            if objective.strip():
+                st.markdown(f"- {objective.strip()}")
+        if saved_week_plan.intention:
+            st.caption(f"Intention: {saved_week_plan.intention}")

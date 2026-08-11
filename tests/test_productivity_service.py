@@ -2,14 +2,25 @@ from datetime import date, datetime, timezone
 
 from database.models import DailyReflection, HabitDefinition, TaskPreference
 from services.productivity_service import (
+    build_daily_plan_suggestion,
+    build_estimation_calibration,
     build_focus_profile,
+    calibrated_task_estimate,
     calculate_weekly_metrics,
+    energy_level_from_labels,
+    estimate_minutes_from_labels,
     recommend_tasks,
 )
 from services.todoist_service import TodoistTask
 
 
-def task(task_id: str, *, priority: int, due_date: str | None = None) -> TodoistTask:
+def task(
+    task_id: str,
+    *,
+    priority: int,
+    due_date: str | None = None,
+    labels: tuple[str, ...] = (),
+) -> TodoistTask:
     return TodoistTask(
         id=task_id,
         content=f"Task {task_id}",
@@ -18,7 +29,7 @@ def task(task_id: str, *, priority: int, due_date: str | None = None) -> Todoist
         project_name="Work",
         section_id=None,
         priority=priority,
-        labels=(),
+        labels=labels,
         due_date=due_date,
         due_datetime=None,
         url=None,
@@ -48,6 +59,161 @@ def test_recommendations_balance_priority_energy_time_and_goals() -> None:
     assert ranked[0]["task"].id == "quick"
     assert "due today" in ranked[0]["reasons"]
     assert "supports a goal" in ranked[0]["reasons"]
+
+
+def test_todoist_energy_labels_override_saved_task_energy() -> None:
+    timestamp = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
+    labeled = task("labeled", priority=2, labels=("energy-low",))
+    preferences = {
+        "labeled": TaskPreference(
+            "labeled", "Labeled", "Work", "high", 20, timestamp
+        )
+    }
+
+    ranked = recommend_tasks(
+        [labeled],
+        preferences=preferences,
+        current_energy="low",
+        available_minutes=25,
+    )
+
+    assert energy_level_from_labels(("ENERGY_HIGH",)) == "high"
+    assert energy_level_from_labels(("medium energy",)) == "medium"
+    assert ranked[0]["energy_level"] == "low"
+    assert "fits low energy" in ranked[0]["reasons"]
+
+
+def test_todoist_minute_labels_override_saved_estimate() -> None:
+    timestamp = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
+    labeled = task("timed", priority=2, labels=("time-30",))
+    preferences = {
+        "timed": TaskPreference("timed", "Timed", "Work", "medium", 90, timestamp)
+    }
+
+    ranked = recommend_tasks(
+        [labeled],
+        preferences=preferences,
+        current_energy="medium",
+        available_minutes=30,
+    )
+
+    assert estimate_minutes_from_labels(("25min",)) == 25
+    assert estimate_minutes_from_labels(("50 minutes",)) == 50
+    assert estimate_minutes_from_labels(("15",)) == 15
+    assert ranked[0]["estimated_minutes"] == 30
+    assert "fits 30 min" in ranked[0]["reasons"]
+
+
+def test_estimation_calibration_requires_repeated_completed_evidence() -> None:
+    sessions = [
+        {
+            "todoist_task_id": "task-1",
+            "project_name": "Study",
+            "planned_minutes": 20,
+            "actual_seconds": 1_800,
+            "status": "completed",
+            "is_provisional": 0,
+        },
+        {
+            "todoist_task_id": "task-1",
+            "project_name": "Study",
+            "planned_minutes": 20,
+            "actual_seconds": 1_800,
+            "status": "completed",
+            "is_provisional": 0,
+        },
+        {
+            "todoist_task_id": "task-1",
+            "project_name": "Study",
+            "planned_minutes": 20,
+            "actual_seconds": 7_200,
+            "status": "interrupted",
+            "is_provisional": 0,
+        },
+    ]
+
+    calibration = build_estimation_calibration(sessions)
+    learned = calibrated_task_estimate(
+        task("task-1", priority=2),
+        TaskPreference(
+            "task-1",
+            "Study",
+            "Study",
+            "medium",
+            20,
+            datetime(2026, 8, 10, tzinfo=timezone.utc),
+        ),
+        calibration,
+    )
+
+    assert calibration["sample_size"] == 2
+    assert calibration["task_ratios"]["task-1"] == 1.5
+    assert learned["estimated_minutes"] == 30
+    assert learned["scope"] == "task"
+    assert learned["samples"] == 2
+
+
+def test_recommendation_explains_history_adjusted_estimate() -> None:
+    timestamp = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
+    candidate = task("learned", priority=2)
+    preferences = {
+        "learned": TaskPreference(
+            "learned", "Learned", "Work", "medium", 20, timestamp
+        )
+    }
+    calibration = {
+        "task_ratios": {"learned": 1.5},
+        "task_samples": {"learned": 3},
+        "project_ratios": {},
+        "project_samples": {},
+        "global_ratio": None,
+        "global_samples": 0,
+    }
+
+    ranked = recommend_tasks(
+        [candidate],
+        preferences=preferences,
+        current_energy="medium",
+        available_minutes=30,
+        estimation_calibration=calibration,
+    )
+
+    assert ranked[0]["base_estimated_minutes"] == 20
+    assert ranked[0]["estimated_minutes"] == 30
+    assert ranked[0]["estimate_samples"] == 3
+    assert "history suggests 30 min" in ranked[0]["reasons"]
+
+
+def test_daily_plan_suggestion_preserves_buffer_and_capacity() -> None:
+    timestamp = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
+    tasks = [
+        task("due", priority=4, due_date="2026-08-10"),
+        task("second", priority=3),
+        task("too-large", priority=4),
+    ]
+    preferences = {
+        "due": TaskPreference("due", "Due", "Work", "medium", 30, timestamp),
+        "second": TaskPreference(
+            "second", "Second", "Work", "medium", 30, timestamp
+        ),
+        "too-large": TaskPreference(
+            "too-large", "Large", "Work", "medium", 90, timestamp
+        ),
+    }
+
+    suggestion = build_daily_plan_suggestion(
+        tasks,
+        preferences=preferences,
+        current_energy="medium",
+        available_minutes=100,
+        buffer_percent=20,
+        today=date(2026, 8, 10),
+    )
+
+    assert suggestion["usable_minutes"] == 80
+    assert suggestion["buffer_minutes"] == 20
+    assert suggestion["planned_minutes"] == 60
+    assert [item["task"].id for item in suggestion["items"]] == ["due", "second"]
 
 
 def test_focus_profile_learns_duration_period_and_mood() -> None:

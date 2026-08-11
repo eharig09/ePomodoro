@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+import sqlite3
 
 import pandas as pd
 import streamlit as st
@@ -17,12 +18,19 @@ from database.db import (
     get_habit_label_links,
     get_habit_task_links,
     refresh_habit_task_link,
+    record_habit_daily_checkin,
     record_sync_run,
     save_daily_reflection,
     save_habit_definition,
     save_habit_group_icons,
     set_habit_definition_active,
 )
+from services.cloud_account_service import (
+    CloudAccountError,
+    CloudConfigurationError,
+    get_cloud_session,
+)
+from services.cloud_sync_service import synchronize_if_signed_in
 from database.models import HabitDefinition
 from services.habit_service import (
     best_streak,
@@ -60,6 +68,24 @@ MOOD_LABELS = {
     5: "😄 Great",
 }
 MOOD_EMOJIS = {score: label.split()[0] for score, label in MOOD_LABELS.items()}
+
+
+def sync_account_data() -> None:
+    try:
+        synchronize_if_signed_in()
+        st.session_state.cloud_background_sync_error = None
+    except (
+        CloudAccountError,
+        CloudConfigurationError,
+        OSError,
+        ValueError,
+        sqlite3.Error,
+    ) as exc:
+        st.session_state.cloud_background_sync_error = str(exc)
+        st.toast(
+            "Saved locally. Account sync will retry from Settings.",
+            icon=":material/cloud_off:",
+        )
 
 
 def schedule_label(weekdays: tuple[int, ...]) -> str:
@@ -256,7 +282,10 @@ def habit_rules_dialog(habit: HabitDefinition | None = None) -> None:
             available_labels,
             default=sorted(existing_labels),
             accept_new_options=True,
-            help="You can type a label that is not currently attached to an active task.",
+            help=(
+                "Optional. Leave labels and tasks empty for a manual habit, or add a "
+                "label so any matching Todoist completion counts."
+            ),
         )
         selected_task_ids = st.multiselect(
             "Specific Todoist tasks",
@@ -271,6 +300,9 @@ def habit_rules_dialog(habit: HabitDefinition | None = None) -> None:
                 )
             ),
         )
+        st.caption(
+            "No Todoist links creates a manual habit that you check off directly in ePomodoro."
+        )
         submitted = st.form_submit_button(
             "Save habit",
             type="primary",
@@ -280,9 +312,6 @@ def habit_rules_dialog(habit: HabitDefinition | None = None) -> None:
     if submitted:
         if not name.strip():
             st.error("Enter a habit name.")
-            return
-        if not labels and not selected_task_ids:
-            st.error("Choose at least one Todoist label or task.")
             return
         if not scheduled_weekdays:
             st.error("Choose at least one scheduled day.")
@@ -326,6 +355,7 @@ def habit_rules_dialog(habit: HabitDefinition | None = None) -> None:
             saved = updated
 
         import_completed_checkins(st.session_state.habit_completed_tasks)
+        sync_account_data()
         st.toast(f"{saved.name} saved.", icon=":material/check:")
         st.rerun()
 
@@ -336,6 +366,7 @@ def habit_rules_dialog(habit: HabitDefinition | None = None) -> None:
         type="tertiary",
     ):
         set_habit_definition_active(habit.id, False)
+        sync_account_data()
         st.toast("Habit removed from the tracker.", icon=":material/remove_circle:")
         st.rerun()
 
@@ -389,6 +420,7 @@ def import_recurring_dialog() -> None:
                 scheduled_weekdays=scheduled_weekdays,
             )
         import_completed_checkins(st.session_state.habit_completed_tasks)
+        sync_account_data()
         st.toast(
             f"Imported {len(selected_ids)} recurring habit{'s' if len(selected_ids) != 1 else ''}.",
             icon=":material/check:",
@@ -459,6 +491,7 @@ def create_todoist_habit_dialog() -> None:
             task_links=[task_link_from_todoist(task)],
             scheduled_weekdays=scheduled_weekdays,
         )
+        sync_account_data()
         st.session_state.habits_loaded = False
         st.session_state.todoist_loaded = False
         st.toast("Todoist task and habit created.", icon=":material/check_circle:")
@@ -470,6 +503,10 @@ if not st.session_state.habits_loaded:
         sync_todoist_habits()
 
 with st.container(horizontal=True, vertical_alignment="center"):
+    if get_cloud_session() is not None:
+        st.badge("Account sync on", icon=":material/cloud_done:", color="green")
+    else:
+        st.badge("Local only", icon=":material/cloud_off:", color="gray")
     if st.button(
         "Sync Todoist",
         icon=":material/sync:",
@@ -547,12 +584,14 @@ best_ever_streak = max(
 )
 
 metric_columns = st.columns(4)
-metric_columns[0].metric("Tracked habits", len(habits))
-metric_columns[1].metric(
-    "Scheduled today", f"{done_today}/{len(scheduled_today)}"
-)
-metric_columns[2].metric("Best current streak", best_current_streak)
-metric_columns[3].metric("Best streak ever", best_ever_streak)
+with metric_columns[0].container(border=True):
+    st.metric("Tracked habits", len(habits))
+with metric_columns[1].container(border=True):
+    st.metric("Scheduled today", f"{done_today}/{len(scheduled_today)}")
+with metric_columns[2].container(border=True):
+    st.metric("Best current streak", best_current_streak)
+with metric_columns[3].container(border=True):
+    st.metric("Best streak ever", best_ever_streak)
 
 if not habits:
     st.info(
@@ -597,6 +636,7 @@ with st.popover("Group icons", icon=":material/add_reaction:"):
         except ValueError as exc:
             st.error(str(exc))
         else:
+            sync_account_data()
             st.toast("Group icons saved.", icon=":material/check:")
             st.rerun()
 
@@ -667,6 +707,19 @@ st.table(
 
 st.subheader("Mood and quick journal")
 today_reflection = get_daily_reflection(today)
+journal_prompts = {
+    "Free write": "What is on your mind?",
+    "Wins": "What went well today, even if it was small?",
+    "Challenges": "What felt difficult, and what did you learn from it?",
+    "Gratitude": "What are you grateful for today?",
+    "Tomorrow": "What matters most tomorrow?",
+}
+journal_prompt = st.segmented_control(
+    "Writing prompt",
+    list(journal_prompts),
+    default="Free write",
+    key="journal_prompt",
+)
 with st.form("daily_reflection"):
     mood = st.pills(
         "How was today?",
@@ -676,11 +729,12 @@ with st.form("daily_reflection"):
         format_func=lambda score: MOOD_LABELS[score],
     )
     journal = st.text_area(
-        "Quick journal",
+        "Journal entry",
         value=today_reflection.journal if today_reflection else "",
-        max_chars=1_000,
-        placeholder="A quick note about the day…",
-        height=100,
+        max_chars=10_000,
+        placeholder=journal_prompts[str(journal_prompt or "Free write")],
+        height=240,
+        help="Up to 10,000 characters. Existing entries remain available below.",
     )
     reflection_submitted = st.form_submit_button(
         "Save reflection",
@@ -692,6 +746,7 @@ if reflection_submitted:
         st.error("Choose a mood before saving.")
     else:
         save_daily_reflection(today, mood=mood, journal=journal)
+        sync_account_data()
         st.toast("Today's reflection saved.", icon=":material/check:")
         st.rerun()
 
@@ -739,6 +794,7 @@ with st.container(horizontal=True, vertical_alignment="top", gap="small"):
         activity = " ".join(habit_day_status(habit, dates, day) for day in week)
         linked_tasks = links_by_habit.get(habit.id, [])
         labels = sorted(label_links.get(habit.id, set()))
+        is_manual = not linked_tasks and not labels
         candidate_tasks = tasks_matching_habit(
             habit.id,
             st.session_state.todoist_tasks,
@@ -777,6 +833,22 @@ with st.container(horizontal=True, vertical_alignment="top", gap="small"):
                 task_name = str(completion.get("todoist_task_name") or "").strip()
                 message = f"Done today · {task_name}" if task_name else "Done today"
                 st.success(message, icon=":material/check_circle:")
+            elif is_manual:
+                if st.button(
+                    "Check in for today",
+                    key=f"manual_habit_checkin_{habit.id}",
+                    icon=":material/check_circle:",
+                    type="primary",
+                    width="stretch",
+                ):
+                    record_habit_daily_checkin(
+                        habit.id,
+                        datetime.now(timezone.utc),
+                        source="habits",
+                    )
+                    sync_account_data()
+                    st.toast(f"{habit.name} completed.", icon=":material/check:")
+                    st.rerun()
             elif not candidate_tasks:
                 st.caption(
                     "No currently active Todoist task matches these rules. A matching "

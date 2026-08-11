@@ -1,4 +1,9 @@
 .env
+.cloud_config.json
+cloud_config.json
+mobile/android/key.properties
+mobile/android/*.jks
+mobile/android/app/*.jks
 .venv/
 .venv-macos/
 __pycache__/
@@ -11,6 +16,7 @@ data/*.db-*
 data/*.sqlite
 data/*.sqlite3
 data/backups/
+data/profiles/
 .coverage
 htmlcov/
 build/

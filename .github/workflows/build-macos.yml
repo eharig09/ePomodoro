@@ -25,6 +25,8 @@ jobs:
     env:
       FOCUS_MAC_ARCH: ${{ matrix.architecture }}
       PYTHONUNBUFFERED: "1"
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
 
     steps:
       - name: Check out the project

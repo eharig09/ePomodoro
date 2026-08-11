@@ -1,0 +1,129 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/build-android.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/build-android.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build universal Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      FLUTTER_REVISION: 6b182d2c7585eba26d4edce0f97630effd256c33
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+
+    steps:
+      - name: Check out the project
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Install pinned Flutter SDK
+        shell: bash
+        run: |
+          flutter_home="$RUNNER_TEMP/flutter"
+          git clone --branch stable --depth 1 https://github.com/flutter/flutter.git "$flutter_home"
+          actual_revision="$(git -C "$flutter_home" rev-parse HEAD)"
+          if [[ "$actual_revision" != "$FLUTTER_REVISION" ]]; then
+            echo "Stable Flutter moved from the reviewed revision."
+            echo "Expected: $FLUTTER_REVISION"
+            echo "Actual:   $actual_revision"
+            exit 1
+          fi
+          echo "$flutter_home/bin" >> "$GITHUB_PATH"
+
+      - name: Resolve dependencies
+        working-directory: mobile
+        shell: bash
+        run: |
+          flutter config --no-analytics
+          flutter --version
+          flutter pub get
+
+      - name: Verify formatting
+        working-directory: mobile
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: Run static analysis
+        working-directory: mobile
+        run: flutter analyze
+
+      - name: Run automated tests
+        working-directory: mobile
+        run: flutter test
+
+      - name: Prepare permanent Android signing
+        working-directory: mobile
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_KEYSTORE_PASSWORD" || \
+                -z "$ANDROID_KEY_PASSWORD" || -z "$ANDROID_KEY_ALIAS" ]]; then
+            echo "Permanent Android signing secrets are required."
+            exit 1
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/epomodoro-upload.jks
+          {
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "storeFile=epomodoro-upload.jks"
+          } > android/key.properties
+
+      - name: Build installable APK
+        working-directory: mobile
+        shell: bash
+        run: |
+          flutter build apk --release \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+            --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY"
+
+      - name: Name and verify artifact
+        working-directory: mobile
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/ePomodoro-Android.apk
+          sha256sum dist/ePomodoro-Android.apk > dist/ePomodoro-Android.apk.sha256
+          if unzip -l dist/ePomodoro-Android.apk | grep -Eiq '(^|/)(\.env|focus\.db|epomodoro_mobile\.db|key\.properties|.*\.jks)(/|$)'; then
+            echo "A private runtime file was found in the APK."
+            exit 1
+          fi
+
+      - name: Upload Android installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: ePomodoro-Android
+          path: |
+            mobile/dist/ePomodoro-Android.apk
+            mobile/dist/ePomodoro-Android.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

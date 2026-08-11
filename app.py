@@ -11,6 +11,12 @@ from dotenv import load_dotenv
 
 from database.db import get_app_setting, init_db, record_sync_run
 from services.audio_service import ambient_noise
+from services.cloud_account_service import (
+    CloudAccountError,
+    CloudConfigurationError,
+    activate_stored_cloud_profile,
+)
+from services.cloud_sync_service import synchronize_if_signed_in
 from services.habit_service import sync_completed_habit_history
 from services.health_service import create_database_backup
 from services.settings_service import get_todoist_token
@@ -19,15 +25,18 @@ from services.todoist_service import TodoistServiceError
 
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
+cloud_session = activate_stored_cloud_profile()
 
 DEFAULT_CALM_MUSIC_URL = "https://www.youtube.com/watch?v=X4VbdwhkE10"
 
+app_icon_path = Path(__file__).resolve().parent / "assets" / "app_icon.png"
 st.set_page_config(
-    page_title="Focus",
-    page_icon=":material/timer:",
+    page_title="ePomodoro",
+    page_icon=str(app_icon_path),
     layout="wide",
     initial_sidebar_state="auto",
 )
+st.logo(str(app_icon_path), size="large")
 
 init_db()
 todoist_token = get_todoist_token()
@@ -55,6 +64,29 @@ st.session_state.setdefault("habit_sync_error", None)
 st.session_state.setdefault("habit_history_checked", False)
 st.session_state.setdefault("habit_history_sync_error", None)
 st.session_state.setdefault("automatic_backup_error", automatic_backup_error)
+st.session_state.setdefault("cloud_initial_sync_complete", False)
+st.session_state.setdefault("cloud_background_sync_error", None)
+
+if not st.session_state.cloud_initial_sync_complete:
+    st.session_state.cloud_initial_sync_complete = True
+    try:
+        initial_cloud_sync = synchronize_if_signed_in()
+        st.session_state.cloud_background_sync_error = None
+    except (
+        CloudAccountError,
+        CloudConfigurationError,
+        OSError,
+        ValueError,
+        sqlite3.Error,
+    ) as exc:
+        initial_cloud_sync = None
+        st.session_state.cloud_background_sync_error = str(exc)
+    if initial_cloud_sync and (initial_cloud_sync.pushed or initial_cloud_sync.applied):
+        st.toast(
+            f"Account synced · {initial_cloud_sync.pushed} sent · "
+            f"{initial_cloud_sync.applied} updated",
+            icon=":material/cloud_done:",
+        )
 
 
 def is_youtube_url(value: str) -> bool:
@@ -71,6 +103,10 @@ def is_youtube_url(value: str) -> bool:
 
 
 with st.sidebar:
+    if cloud_session is not None:
+        st.badge("Account sync on", icon=":material/cloud_done:", color="green")
+        if st.session_state.cloud_background_sync_error:
+            st.caption("Automatic sync needs attention. Open Settings and use Sync now.")
     if not first_run:
         connection_label = "Todoist connected" if todoist_token else "Local mode"
         st.caption(connection_label)
@@ -171,6 +207,11 @@ else:
             "app_pages/review.py",
             title="Review",
             icon=":material/rate_review:",
+        ),
+        st.Page(
+            "app_pages/calendar.py",
+            title="Calendar",
+            icon=":material/calendar_month:",
         ),
         st.Page(
             "app_pages/history.py",
