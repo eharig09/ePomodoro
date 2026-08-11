@@ -320,6 +320,28 @@ def test_generic_habit_supports_multiple_tasks_labels_and_daily_dedupe(
     assert get_habit_definitions(db_path) == []
 
 
+def test_manual_habit_supports_no_todoist_links_or_labels(tmp_path) -> None:
+    db_path = tmp_path / "focus.db"
+    init_db(db_path)
+
+    habit = create_habit_definition(
+        "Stretch",
+        group_name="Health",
+        scheduled_weekdays=(0, 2, 4),
+        db_path=db_path,
+    )
+
+    assert get_habit_definitions(db_path) == [habit]
+    assert get_habit_task_links(db_path, habit_id=habit.id) == []
+    assert get_habit_label_links(db_path, habit_id=habit.id) == {}
+    assert record_habit_daily_checkin(
+        habit.id,
+        datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc),
+        source="habits",
+        db_path=db_path,
+    )
+
+
 def test_group_icons_and_daily_reflection_are_persistent(tmp_path) -> None:
     db_path = tmp_path / "focus.db"
     init_db(db_path)

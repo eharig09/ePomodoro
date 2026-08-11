@@ -517,8 +517,6 @@ def save_habit_definition(
     if len(clean_group) > 120:
         raise ValueError("Habit group must be 120 characters or fewer")
     scheduled_weekdays = _serialize_scheduled_weekdays(habit.scheduled_weekdays)
-    if not links and not clean_labels:
-        raise ValueError("Link at least one Todoist task or label")
     if any(link.habit_id != habit.id for link in links):
         raise ValueError("Habit task links must belong to the saved habit")
     if any(not 1 <= link.priority <= 4 for link in links):
