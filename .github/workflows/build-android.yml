@@ -43,10 +43,14 @@ jobs:
         shell: bash
         run: |
           flutter_home="$RUNNER_TEMP/flutter"
-          git init "$flutter_home"
-          git -C "$flutter_home" remote add origin https://github.com/flutter/flutter.git
-          git -C "$flutter_home" fetch --depth 1 origin "$FLUTTER_REVISION"
-          git -C "$flutter_home" checkout --detach FETCH_HEAD
+          git clone --branch stable --depth 1 https://github.com/flutter/flutter.git "$flutter_home"
+          actual_revision="$(git -C "$flutter_home" rev-parse HEAD)"
+          if [[ "$actual_revision" != "$FLUTTER_REVISION" ]]; then
+            echo "Stable Flutter moved from the reviewed revision."
+            echo "Expected: $FLUTTER_REVISION"
+            echo "Actual:   $actual_revision"
+            exit 1
+          fi
           echo "$flutter_home/bin" >> "$GITHUB_PATH"
 
       - name: Resolve dependencies
