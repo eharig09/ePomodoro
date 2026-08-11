@@ -26,6 +26,17 @@ The optional Todoist token is stored separately in macOS Keychain. The current
 Mac build configuration is ready, but the `.app` and `.dmg` must be compiled on
 a Mac because PyInstaller does not cross-compile macOS applications from Windows.
 
+## Android mobile app
+
+The `mobile` directory contains an Android-first Flutter companion with local
+SQLite storage, optional Todoist API v1 synchronization, focus and break timers,
+scheduled habits and streaks, mood/journaling, and editable history. It uses a
+separate mobile database, leaving the desktop application unchanged.
+
+Run the **Build Android APK** GitHub Actions workflow to create one universal
+`ePomodoro-Android.apk` that can be shared directly. See `mobile/README.md` for
+the feature list, development commands, and current signing limitations.
+
 ## Features
 
 - Optionally loads active Todoist tasks and projects through the official Python SDK.

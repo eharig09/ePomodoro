@@ -1,0 +1,92 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/build-android.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build universal Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      FLUTTER_REVISION: 6b182d2c7585eba26d4edce0f97630effd256c33
+      FLUTTER_HOME: ${{ runner.temp }}/flutter
+
+    steps:
+      - name: Check out the project
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Install pinned Flutter SDK
+        shell: bash
+        run: |
+          git init "$FLUTTER_HOME"
+          git -C "$FLUTTER_HOME" remote add origin https://github.com/flutter/flutter.git
+          git -C "$FLUTTER_HOME" fetch --depth 1 origin "$FLUTTER_REVISION"
+          git -C "$FLUTTER_HOME" checkout --detach FETCH_HEAD
+          echo "$FLUTTER_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Resolve dependencies
+        working-directory: mobile
+        shell: bash
+        run: |
+          flutter config --no-analytics
+          flutter --version
+          flutter pub get
+
+      - name: Verify formatting
+        working-directory: mobile
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: Run static analysis
+        working-directory: mobile
+        run: flutter analyze
+
+      - name: Run automated tests
+        working-directory: mobile
+        run: flutter test
+
+      - name: Build installable APK
+        working-directory: mobile
+        run: flutter build apk --release
+
+      - name: Name and verify artifact
+        working-directory: mobile
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/ePomodoro-Android.apk
+          sha256sum dist/ePomodoro-Android.apk > dist/ePomodoro-Android.apk.sha256
+          if unzip -l dist/ePomodoro-Android.apk | grep -Eiq '(^|/)(\.env|focus\.db|epomodoro_mobile\.db)(/|$)'; then
+            echo "A private runtime file was found in the APK."
+            exit 1
+          fi
+
+      - name: Upload Android installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: ePomodoro-Android
+          path: |
+            mobile/dist/ePomodoro-Android.apk
+            mobile/dist/ePomodoro-Android.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
